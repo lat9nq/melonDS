@@ -39,8 +39,8 @@ EXEFS_SRC	:=	exefs_src
 ROMFS		:=	romfs
 
 APP_TITLE   := melonDS
-APP_AUTHOR  := Hydr8gon, StapleButter
-APP_VERSION := 0.7.3
+APP_AUTHOR  := Hydr8gon, Arisotura
+APP_VERSION := 0.7.4
 ICON        := icon/melon.jpg
 
 #---------------------------------------------------------------------------------
