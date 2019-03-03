@@ -16,48 +16,43 @@
     with melonDS. If not, see http://www.gnu.org/licenses/.
 */
 
-#ifndef NDSCART_H
-#define NDSCART_H
+#ifndef LAN_H
+#define LAN_H
 
-#include "types.h"
+#include "../types.h"
 
-namespace NDSCart
+namespace LAN
 {
 
-extern u16 SPICnt;
-extern u32 ROMCnt;
+typedef struct
+{
+    char DeviceName[128];
+    char FriendlyName[128];
+    char Description[128];
 
-extern u8 ROMCommand[8];
-extern u32 ROMDataOut;
+    u8 MAC[6];
+    u8 IP_v4[4];
 
-extern u8 EncSeed0[5];
-extern u8 EncSeed1[5];
+    u8 DNS[8][4];
 
-extern u8* CartROM;
-extern u32 CartROMSize;
+    u8 DHCP_MAC[6];
+    u8 DHCP_IP_v4[4];
 
-extern u32 CartID;
+    void* Internal;
+
+} AdapterData;
+
+
+extern AdapterData* Adapters;
+extern int NumAdapters;
+
 
 bool Init();
 void DeInit();
-void Reset();
 
-void DoSavestate(Savestate* file);
-
-bool LoadROM(const char* path, const char* sram, bool direct);
-void RelocateSave(const char* path, bool write);
-
-void WriteROMCnt(u32 val);
-u32 ReadROMData();
-
-void WriteSPICnt(u16 val);
-u8 ReadSPIData();
-void WriteSPIData(u8 val);
-
-void ROMPrepareData(u32 param);
-void ROMEndTransfer(u32 param);
-void SPITransferDone(u32 param);
+int SendPacket(u8* data, int len);
+int RecvPacket(u8* data);
 
 }
 
-#endif
+#endif // LAN_H

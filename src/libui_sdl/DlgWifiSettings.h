@@ -16,48 +16,15 @@
     with melonDS. If not, see http://www.gnu.org/licenses/.
 */
 
-#ifndef NDSCART_H
-#define NDSCART_H
+#ifndef DLGWIFISETTINGS_H
+#define DLGWIFISETTINGS_H
 
-#include "types.h"
-
-namespace NDSCart
+namespace DlgWifiSettings
 {
 
-extern u16 SPICnt;
-extern u32 ROMCnt;
-
-extern u8 ROMCommand[8];
-extern u32 ROMDataOut;
-
-extern u8 EncSeed0[5];
-extern u8 EncSeed1[5];
-
-extern u8* CartROM;
-extern u32 CartROMSize;
-
-extern u32 CartID;
-
-bool Init();
-void DeInit();
-void Reset();
-
-void DoSavestate(Savestate* file);
-
-bool LoadROM(const char* path, const char* sram, bool direct);
-void RelocateSave(const char* path, bool write);
-
-void WriteROMCnt(u32 val);
-u32 ReadROMData();
-
-void WriteSPICnt(u16 val);
-u8 ReadSPIData();
-void WriteSPIData(u8 val);
-
-void ROMPrepareData(u32 param);
-void ROMEndTransfer(u32 param);
-void SPITransferDone(u32 param);
+void Open();
 
 }
 
-#endif
+#endif // DLGWIFISETTINGS_H
+

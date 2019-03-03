@@ -1,5 +1,5 @@
 /*
-    Copyright 2016-2019 StapleButter
+    Copyright 2016-2019 Arisotura
 
     This file is part of melonDS.
 
@@ -60,6 +60,8 @@ extern int DirectBoot;
 extern int Threaded3D;
 
 extern int SocketBindAnyAddr;
+extern char LANDevice[128];
+extern int DirectLAN;
 
 extern int SavestateRelocSRAM;
 

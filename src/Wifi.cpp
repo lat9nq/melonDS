@@ -1,5 +1,5 @@
 /*
-    Copyright 2016-2019 StapleButter
+    Copyright 2016-2019 Arisotura
 
     This file is part of melonDS.
 
@@ -28,8 +28,8 @@
 namespace Wifi
 {
 
-//#define WIFI_LOG printf
-#define WIFI_LOG(...) {}
+#define WIFI_LOG printf
+//#define WIFI_LOG(...) {}
 
 u8 RAM[0x2000];
 u16 IO[0x1000>>1];
