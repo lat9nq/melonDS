@@ -389,7 +389,7 @@ void DrawIcon(u8 *tex, float x, float y, int size)
     glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
 }
 
-void Menu(string title, string Buttons, int rowcount, bool (*Buttonactions)(u32, int), void (*drawrow)(int, int, int))
+void Menu(string title, string buttons, int rowcount, bool (*buttonactions)(u32, int), void (*drawrow)(int, int, int))
 {
     float clearcolor = ((MenuTheme == ColorSetId_Light) ? 235.0f : 45.0f) / 255;
     glClearColor(clearcolor, clearcolor, clearcolor, 1.0f);
@@ -409,8 +409,7 @@ void Menu(string title, string Buttons, int rowcount, bool (*Buttonactions)(u32,
         DrawString(title, 72, 30, 42, false, false);
         DrawLine(30, 88, 1250, 88, false);
         DrawLine(30, 648, 1250, 648, false);
-        DrawLine(90, 124, 1190, 124, true);
-        DrawString(Buttons, 1218, 667, 34, false, true);
+        DrawString(buttons, 1218, 667, 34, false, true);
 
         hidScanInput();
         u32 pressed = hidKeysDown(CONTROLLER_P1_AUTO);
@@ -428,7 +427,7 @@ void Menu(string title, string Buttons, int rowcount, bool (*Buttonactions)(u32,
             downheld = true;
             timeheld = chrono::steady_clock::now();
         }
-        if (Buttonactions(pressed, selection))
+        if (buttonactions(pressed, selection))
             break;
 
         if (released & KEY_UP)
@@ -453,6 +452,9 @@ void Menu(string title, string Buttons, int rowcount, bool (*Buttonactions)(u32,
                 timeheld = chrono::steady_clock::now();
             }
         }
+
+        if (rowcount > 0)
+            DrawLine(90, 124, 1190, 124, true);
 
         for (int i = 0; i < 7; i++)
         {
@@ -486,6 +488,9 @@ bool ControlsButtonActions(u32 pressed, int selection)
         }
         else
         {
+            DrawString("Press a button to map it to: " + (string)Controls[selection].name, 90, 124, 38, false, false);
+            eglSwapBuffers(Display, Surface);
+
             pressed = 0;
             while (!pressed)
             {
@@ -517,7 +522,7 @@ void ControlsDrawRow(int i, int row, int selection)
 
 void ControlsMenu()
 {
-    Menu("Controls", " Back     € OK", Controls.size(), ControlsButtonActions, ControlsDrawRow);
+    Menu("Controls", "\x81 Back     \x80 OK", Controls.size(), ControlsButtonActions, ControlsDrawRow);
 }
 
 bool SettingsButtonActions(u32 pressed, int selection)
@@ -561,7 +566,7 @@ void SettingsDrawRow(int i, int row, int selection)
 
 void SettingsMenu()
 {
-    Menu("Settings", "‚ Controls      Back     € OK", Settings.size(), SettingsButtonActions, SettingsDrawRow);
+    Menu("Settings", "\x82 Controls     \x81 Back     \x80 OK", Settings.size(), SettingsButtonActions, SettingsDrawRow);
 }
 
 bool FilesButtonActions(u32 pressed, int selection)
@@ -623,7 +628,7 @@ void FilesMenu()
         closedir(dir);
         sort(Files.begin(), Files.end());
 
-        Menu("melonDS " MELONDS_VERSION, "ƒ Exit     ‚ Settings      Back     € OK", Files.size(), FilesButtonActions, FilesDrawRow);
+        Menu("melonDS " MELONDS_VERSION, "\x83 Exit     \x82 Settings     \x81 Back     \x80 OK", Files.size(), FilesButtonActions, FilesDrawRow);
         if (ROMPath == "")
             return;
 
@@ -1032,7 +1037,7 @@ void PauseDrawRow(int i, int row, int selection)
 void PauseMenu()
 {
     Pause();
-    Menu("melonDS " MELONDS_VERSION, "€ OK", PauseMenuItems.size(), PauseButtonActions, PauseDrawRow);
+    Menu("melonDS " MELONDS_VERSION, "\x80 OK", PauseMenuItems.size(), PauseButtonActions, PauseDrawRow);
 }
 
 bool LocalFileExists(const char *name)
@@ -1075,7 +1080,7 @@ int main(int argc, char **argv)
         DrawString("melonDS " MELONDS_VERSION, 72, 30, 42, false, false);
         DrawLine(30, 88, 1250, 88, false);
         DrawLine(30, 648, 1250, 648, false);
-        DrawString("ƒ Exit", 1218, 667, 34, false, true);
+        DrawString("\x83 Exit", 1218, 667, 34, false, true);
         DrawString("One or more of the following required files don't exist or couldn't be accessed:", 90, 124, 38, false, false);
         DrawString("bios7.bin -- ARM7 BIOS", 90, 124 + 38, 38, false, false);
         DrawString("bios9.bin -- ARM9 BIOS", 90, 124 + 38 * 2, 38, false, false);
