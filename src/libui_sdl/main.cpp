@@ -27,7 +27,7 @@
 #include "../types.h"
 #include "../melon_fopen.h"
 #include "../version.h"
-#include "../Config.h"
+#include "PlatformConfig.h"
 
 #include "DlgEmuSettings.h"
 #include "DlgInputConfig.h"
@@ -632,6 +632,7 @@ int EmuThreadFunc(void* burp)
     if (joybuttons) delete[] joybuttons;
 
     NDS::DeInit();
+    Platform::LAN_DeInit();
 
     return 44203;
 }
@@ -1667,7 +1668,7 @@ void ApplyNewSettings(int type)
     EmuRunning = 2;
     while (EmuStatus != 2);
 
-    if (type == 0) // general emu settings)
+    if (type == 0) // general emu settings
     {
         GPU3D::SoftRenderer::SetupRenderThread();
     }
@@ -1678,6 +1679,9 @@ void ApplyNewSettings(int type)
             Platform::MP_DeInit();
             Platform::MP_Init();
         }
+
+        Platform::LAN_DeInit();
+        Platform::LAN_Init();
     }
 
     EmuRunning = prevstatus;

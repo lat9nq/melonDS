@@ -23,10 +23,18 @@
 #include "libui/ui.h"
 
 #include "../types.h"
-#include "../Config.h"
+#include "PlatformConfig.h"
 
-#include "LAN.h"
+#include "LAN_Socket.h"
+#include "LAN_PCap.h"
 #include "DlgWifiSettings.h"
+
+
+#ifdef __WIN32__
+#define PCAP_NAME "winpcap/npcap"
+#else
+#define PCAP_NAME "libpcap"
+#endif // __WIN32__
 
 
 void ApplyNewSettings(int type);
@@ -38,8 +46,11 @@ namespace DlgWifiSettings
 bool opened;
 uiWindow* win;
 
+bool haspcap;
+
 uiCheckbox* cbBindAnyAddr;
 
+uiLabel* lbAdapterList;
 uiCombobox* cmAdapterList;
 uiCheckbox* cbDirectLAN;
 
@@ -49,13 +60,35 @@ uiLabel* lbAdapterDNS0;
 uiLabel* lbAdapterDNS1;
 
 
+void UpdateAdapterControls()
+{
+    bool enable = haspcap && uiCheckboxChecked(cbDirectLAN);
+
+    if (enable)
+    {
+        uiControlEnable(uiControl(lbAdapterList));
+        uiControlEnable(uiControl(cmAdapterList));
+        uiControlEnable(uiControl(lbAdapterMAC));
+        uiControlEnable(uiControl(lbAdapterIP));
+    }
+    else
+    {
+        uiControlDisable(uiControl(lbAdapterList));
+        uiControlDisable(uiControl(cmAdapterList));
+        uiControlDisable(uiControl(lbAdapterMAC));
+        uiControlDisable(uiControl(lbAdapterIP));
+    }
+}
+
 void UpdateAdapterInfo()
 {
-    int sel = uiComboboxSelected(cmAdapterList);
-    if (sel < 0 || sel >= LAN::NumAdapters) return;
-    if (LAN::NumAdapters < 1) return;
+    if (!haspcap) return;
 
-    LAN::AdapterData* adapter = &LAN::Adapters[sel];
+    int sel = uiComboboxSelected(cmAdapterList);
+    if (sel < 0 || sel >= LAN_PCap::NumAdapters) return;
+    if (LAN_PCap::NumAdapters < 1) return;
+
+    LAN_PCap::AdapterData* adapter = &LAN_PCap::Adapters[sel];
     char tmp[64];
 
     sprintf(tmp, "MAC: %02X:%02X:%02X:%02X:%02X:%02X",
@@ -68,7 +101,7 @@ void UpdateAdapterInfo()
             adapter->IP_v4[2], adapter->IP_v4[3]);
     uiLabelSetText(lbAdapterIP, tmp);
 
-    sprintf(tmp, "Primary DNS: %d.%d.%d.%d",
+    /*sprintf(tmp, "Primary DNS: %d.%d.%d.%d",
             adapter->DNS[0][0], adapter->DNS[0][1],
             adapter->DNS[0][2], adapter->DNS[0][3]);
     uiLabelSetText(lbAdapterDNS0, tmp);
@@ -76,13 +109,18 @@ void UpdateAdapterInfo()
     sprintf(tmp, "Secondary DNS: %d.%d.%d.%d",
             adapter->DNS[1][0], adapter->DNS[1][1],
             adapter->DNS[1][2], adapter->DNS[1][3]);
-    uiLabelSetText(lbAdapterDNS1, tmp);
+    uiLabelSetText(lbAdapterDNS1, tmp);*/
 }
 
 int OnCloseWindow(uiWindow* window, void* blarg)
 {
     opened = false;
     return 1;
+}
+
+void OnDirectModeToggle(uiCheckbox* c, void* blarg)
+{
+    UpdateAdapterControls();
 }
 
 void OnAdapterSelect(uiCombobox* c, void* blarg)
@@ -102,14 +140,14 @@ void OnOk(uiButton* btn, void* blarg)
     Config::DirectLAN = uiCheckboxChecked(cbDirectLAN);
 
     int sel = uiComboboxSelected(cmAdapterList);
-    if (sel < 0 || sel >= LAN::NumAdapters) sel = 0;
-    if (LAN::NumAdapters < 1)
+    if (sel < 0 || sel >= LAN_PCap::NumAdapters) sel = 0;
+    if (LAN_PCap::NumAdapters < 1)
     {
         Config::LANDevice[0] = '\0';
     }
     else
     {
-        strncpy(Config::LANDevice, LAN::Adapters[sel].DeviceName, 127);
+        strncpy(Config::LANDevice, LAN_PCap::Adapters[sel].DeviceName, 127);
         Config::LANDevice[127] = '\0';
     }
 
@@ -129,7 +167,8 @@ void Open()
         return;
     }
 
-    LAN::Init();
+    LAN_Socket::Init();
+    haspcap = LAN_PCap::Init();
 
     opened = true;
     win = uiNewWindow("Wifi settings - melonDS", 400, 100, 0, 0, 0);
@@ -162,24 +201,25 @@ void Open()
         uiBox* in_ctrl = uiNewVerticalBox();
         uiGroupSetChild(grp, uiControl(in_ctrl));
 
-        lbl = uiNewLabel("Network adapter:");
-        uiBoxAppend(in_ctrl, uiControl(lbl), 0);
+        cbDirectLAN = uiNewCheckbox("Direct mode (requires " PCAP_NAME " and ethernet connection)");
+        uiCheckboxOnToggled(cbDirectLAN, OnDirectModeToggle, NULL);
+        uiBoxAppend(in_ctrl, uiControl(cbDirectLAN), 0);
+
+        lbAdapterList = uiNewLabel("Network adapter:");
+        uiBoxAppend(in_ctrl, uiControl(lbAdapterList), 0);
 
         cmAdapterList = uiNewCombobox();
         uiComboboxOnSelected(cmAdapterList, OnAdapterSelect, NULL);
         uiBoxAppend(in_ctrl, uiControl(cmAdapterList), 0);
 
-        lbAdapterMAC = uiNewLabel("MAC");
+        lbAdapterMAC = uiNewLabel("MAC: ??");
         uiBoxAppend(in_ctrl, uiControl(lbAdapterMAC), 0);
-        lbAdapterIP = uiNewLabel("IP");
+        lbAdapterIP = uiNewLabel("IP: ??");
         uiBoxAppend(in_ctrl, uiControl(lbAdapterIP), 0);
-        lbAdapterDNS0 = uiNewLabel("DNS0");
+        /*lbAdapterDNS0 = uiNewLabel("DNS0");
         uiBoxAppend(in_ctrl, uiControl(lbAdapterDNS0), 0);
         lbAdapterDNS1 = uiNewLabel("DNS1");
-        uiBoxAppend(in_ctrl, uiControl(lbAdapterDNS1), 0);
-
-        cbDirectLAN = uiNewCheckbox("Direct mode (requires ethernet connection)");
-        uiBoxAppend(in_ctrl, uiControl(cbDirectLAN), 0);
+        uiBoxAppend(in_ctrl, uiControl(lbAdapterDNS1), 0);*/
     }
 
     {
@@ -202,9 +242,9 @@ void Open()
     uiCheckboxSetChecked(cbBindAnyAddr, Config::SocketBindAnyAddr);
 
     int sel = 0;
-    for (int i = 0; i < LAN::NumAdapters; i++)
+    for (int i = 0; i < LAN_PCap::NumAdapters; i++)
     {
-        LAN::AdapterData* adapter = &LAN::Adapters[i];
+        LAN_PCap::AdapterData* adapter = &LAN_PCap::Adapters[i];
 
         uiComboboxAppend(cmAdapterList, adapter->FriendlyName);
 
@@ -213,8 +253,10 @@ void Open()
     }
     uiComboboxSetSelected(cmAdapterList, sel);
     UpdateAdapterInfo();
+    UpdateAdapterControls();
 
     uiCheckboxSetChecked(cbDirectLAN, Config::DirectLAN);
+    if (!haspcap) uiControlDisable(uiControl(cbDirectLAN));
 
     uiControlShow(uiControl(win));
 }
