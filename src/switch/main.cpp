@@ -33,7 +33,7 @@
 #define u64 u64_
 #define s64 s64_
 
-#include "../Config.h"
+#include "PlatformConfig.h"
 #include "../Savestate.h"
 #include "../GPU.h"
 #include "../NDS.h"
