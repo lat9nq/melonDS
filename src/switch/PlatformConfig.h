@@ -33,9 +33,9 @@ enum
 namespace Config
 {
 
-extern int JoyMapping[12];
+extern int Mapping[12];
 
-extern int HKJoyMapping[HK_MAX];
+extern int HKMapping[HK_MAX];
 
 extern int ScreenRotation;
 extern int ScreenGap;

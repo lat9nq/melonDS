@@ -17,16 +17,14 @@
 */
 
 #include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
 #include "PlatformConfig.h"
 
 namespace Config
 {
 
-int JoyMapping[12];
+int Mapping[12];
 
-int HKJoyMapping[HK_MAX];
+int HKMapping[HK_MAX];
 
 int ScreenRotation;
 int ScreenGap;
@@ -49,22 +47,22 @@ int SwitchOverclock;
 
 ConfigEntry PlatformConfigFile[] =
 {
-    {"Joy_A",      0, &JoyMapping[0],  -1, NULL, 0},
-    {"Joy_B",      0, &JoyMapping[1],  -1, NULL, 0},
-    {"Joy_Select", 0, &JoyMapping[2],  -1, NULL, 0},
-    {"Joy_Start",  0, &JoyMapping[3],  -1, NULL, 0},
-    {"Joy_Right",  0, &JoyMapping[4],  -1, NULL, 0},
-    {"Joy_Left",   0, &JoyMapping[5],  -1, NULL, 0},
-    {"Joy_Up",     0, &JoyMapping[6],  -1, NULL, 0},
-    {"Joy_Down",   0, &JoyMapping[7],  -1, NULL, 0},
-    {"Joy_R",      0, &JoyMapping[8],  -1, NULL, 0},
-    {"Joy_L",      0, &JoyMapping[9],  -1, NULL, 0},
-    {"Joy_X",      0, &JoyMapping[10], -1, NULL, 0},
-    {"Joy_Y",      0, &JoyMapping[11], -1, NULL, 0},
+    {"Joy_A",      0, &Mapping[0],  0, NULL, 0},
+    {"Joy_B",      0, &Mapping[1],  0, NULL, 0},
+    {"Joy_Select", 0, &Mapping[2],  0, NULL, 0},
+    {"Joy_Start",  0, &Mapping[3],  0, NULL, 0},
+    {"Joy_Right",  0, &Mapping[4],  0, NULL, 0},
+    {"Joy_Left",   0, &Mapping[5],  0, NULL, 0},
+    {"Joy_Up",     0, &Mapping[6],  0, NULL, 0},
+    {"Joy_Down",   0, &Mapping[7],  0, NULL, 0},
+    {"Joy_R",      0, &Mapping[8],  0, NULL, 0},
+    {"Joy_L",      0, &Mapping[9],  0, NULL, 0},
+    {"Joy_X",      0, &Mapping[10], 0, NULL, 0},
+    {"Joy_Y",      0, &Mapping[11], 0, NULL, 0},
 
-    {"HKJoy_Lid",  0, &HKJoyMapping[HK_Lid],  -1, NULL, 0},
-    {"HKJoy_Mic",  0, &HKJoyMapping[HK_Mic],  -1, NULL, 0},
-    {"HKJoy_Menu", 0, &HKJoyMapping[HK_Menu], -1, NULL, 0},
+    {"HKJoy_Lid",  0, &HKMapping[HK_Lid],  0, NULL, 0},
+    {"HKJoy_Mic",  0, &HKMapping[HK_Mic],  0, NULL, 0},
+    {"HKJoy_Menu", 0, &HKMapping[HK_Menu], 0, NULL, 0},
 
     {"ScreenRotation", 0, &ScreenRotation, 0, NULL, 0},
     {"ScreenGap",      0, &ScreenGap,      0, NULL, 0},
@@ -78,10 +76,10 @@ ConfigEntry PlatformConfigFile[] =
 
     {"SavStaRelocSRAM", 0, &SavestateRelocSRAM, 0, NULL, 0},
 
-    {"AudioVolume", 0, &AudioVolume, 256, NULL, 0},
+    {"AudioVolume",  0, &AudioVolume,  4, NULL, 0},
     {"MicInputType", 0, &MicInputType, 1, NULL, 0},
 
-    {"LastROMFolder", 1, LastROMFolder, 0, "", 511},
+    {"LastROMFolder", 1, LastROMFolder, 0, "sdmc:/", 511},
 
     {"SwitchOverclock", 0, &SwitchOverclock, 0, NULL, 0},
 
