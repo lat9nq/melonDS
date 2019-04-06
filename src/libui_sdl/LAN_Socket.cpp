@@ -21,7 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "Wifi.h"
+#include "../Wifi.h"
 #include "LAN_Socket.h"
 #include "../Config.h"
 
@@ -34,8 +34,10 @@
 	#include <unistd.h>
 	#include <arpa/inet.h>
 	#include <netinet/in.h>
+	#include <sys/types.h>
 	#include <sys/select.h>
 	#include <sys/socket.h>
+	#include <netdb.h>
 	#define socket_t    int
 	#define sockaddr_t  struct sockaddr
 	#define closesocket close
@@ -82,7 +84,7 @@ typedef struct
     // 1: connected
     u8 Status;
 
-    SOCKET Backend;
+    socket_t Backend;
 
 } TCPSocket;
 
@@ -92,7 +94,7 @@ typedef struct
     u16 SourcePort;
     u16 DestPort;
 
-    SOCKET Backend;
+    socket_t Backend;
     struct sockaddr_in BackendAddr;
 
 } UDPSocket;
@@ -456,11 +458,12 @@ void HandleDNSFrame(u8* data, int len)
             while (p)
             {
                 struct sockaddr_in* addr = (struct sockaddr_in*)p->ai_addr;
-                printf(" -> %d.%d.%d.%d",
+                /*printf(" -> %d.%d.%d.%d",
                        addr->sin_addr.S_un.S_un_b.s_b1, addr->sin_addr.S_un.S_un_b.s_b2,
-                       addr->sin_addr.S_un.S_un_b.s_b3, addr->sin_addr.S_un.S_un_b.s_b4);
+                       addr->sin_addr.S_un.S_un_b.s_b3, addr->sin_addr.S_un.S_un_b.s_b4);*/
 
-                addr_res = addr->sin_addr.S_un.S_addr;
+                //addr_res = addr->sin_addr.S_un.S_addr;
+                addr_res = *(u32*)&addr->sin_addr;
                 p = p->ai_next;
             }
         }
@@ -601,7 +604,7 @@ void HandleUDPFrame(u8* data, int len)
         sock->BackendAddr.sin_family = AF_INET;
         sock->BackendAddr.sin_port = htons(dstport);
         memcpy(&sock->BackendAddr.sin_addr, &ipheader[16], 4);
-        /*if (bind(sock->Backend, (struct sockaddr*)&sock->BackendAddr, sizeof(sock->BackendAddr)) == SOCKET_ERROR)
+        /*if (bind(sock->Backend, (struct sockaddr*)&sock->BackendAddr, sizeof(sock->BackendAddr)) == -1)
         {
             printf("bind() shat itself :(\n");
         }*/
@@ -631,7 +634,7 @@ void TCP_SYNACK(TCPSocket* sock, u8* data, int len)
     seqnum++;
     sock->AckNum = seqnum;
 
-    printf("SYNACK  SEQ=%08X|%08X\n", sock->SeqNum, sock->AckNum);
+    //printf("SYNACK  SEQ=%08X|%08X\n", sock->SeqNum, sock->AckNum);
 
     // ethernet
     memcpy(out, &data[6], 6); out += 6;
@@ -694,7 +697,7 @@ void TCP_ACK(TCPSocket* sock, bool fin)
     u16 flags       = 0x5010;
     if (fin) flags |= 0x0001;
 
-    printf("%sACK  SEQ=%08X|%08X\n", fin?"FIN":"   ", sock->SeqNum, sock->AckNum);
+    //printf("%sACK  SEQ=%08X|%08X\n", fin?"FIN":"   ", sock->SeqNum, sock->AckNum);
 
     // ethernet
     memcpy(out, Wifi::GetMAC(), 6); out += 6;
@@ -745,7 +748,7 @@ void TCP_BuildIncomingFrame(TCPSocket* sock, u8* data, int len)
     u8* out = &resp[0];
 
     if (len > 1536) return;
-printf("INCOMING SEQ=%08X|%08X\n", sock->SeqNum, sock->AckNum);
+//printf("INCOMING SEQ=%08X|%08X\n", sock->SeqNum, sock->AckNum);
     // ethernet
     memcpy(out, Wifi::GetMAC(), 6); out += 6; // hurf
     memcpy(out, kServerMAC, 6); out += 6;
@@ -805,10 +808,10 @@ void HandleTCPFrame(u8* data, int len)
     u32 tcplen = ntohs(*(u16*)&ipheader[2]) - 0x14;
     u32 tcpdatalen = tcplen - tcpheaderlen;
 
-    printf("tcpflags=%04X header=%d data=%d seq=%08X|%08X\n",
+    /*printf("tcpflags=%04X header=%d data=%d seq=%08X|%08X\n",
            flags, tcpheaderlen, tcpdatalen,
            ntohl(*(u32*)&tcpheader[4]),
-           ntohl(*(u32*)&tcpheader[8]));
+           ntohl(*(u32*)&tcpheader[8]));*/
 
     if (flags & 0x002) // SYN
     {
@@ -869,7 +872,7 @@ void HandleTCPFrame(u8* data, int len)
         conn_addr.sin_family = AF_INET;
         memcpy(&conn_addr.sin_addr, &ipheader[16], 4);
         conn_addr.sin_port = htons(dstport);
-        if (connect(sock->Backend, (sockaddr*)&conn_addr, sizeof(conn_addr)) == SOCKET_ERROR)
+        if (connect(sock->Backend, (sockaddr*)&conn_addr, sizeof(conn_addr)) == -1)
         {
             printf("connect() shat itself :(\n");
         }
@@ -1088,7 +1091,7 @@ int RecvPacket(u8* data)
         TCP_BuildIncomingFrame(sock, recvbuf, recvlen);
 
         // debug
-        for (int j = 0; j < recvlen; j += 16)
+        /*for (int j = 0; j < recvlen; j += 16)
         {
             int rem = recvlen - j;
             if (rem > 16) rem = 16;
@@ -1097,7 +1100,7 @@ int RecvPacket(u8* data)
                 printf("%02X ", recvbuf[k+j]);
             }
             printf("\n");
-        }
+        }*/
 
         //recvlen = recv(sock->Backend, (char*)recvbuf, 1024, 0);
         //if (recvlen == 0) printf("it closed immediately after\n");

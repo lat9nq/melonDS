@@ -20,11 +20,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include "Config.h"
-#include "melon_fopen.h"
+#include "Platform.h"
 
-
-bool LocalFileExists(const char* name);
-extern char* EmuDirectory;
 
 namespace Config
 {
@@ -53,6 +50,7 @@ void Load()
         {
             if (c > 0) break;
             entry = &PlatformConfigFile[0];
+            if (!entry->Value) break;
             c++;
         }
 
@@ -67,7 +65,7 @@ void Load()
         entry++;
     }
 
-    FILE* f = melon_fopen_local(kConfigFile, "r");
+    FILE* f = Platform::OpenLocalFile(kConfigFile, "r");
     if (!f) return;
 
     char linebuf[1024];
@@ -87,6 +85,7 @@ void Load()
             {
                 if (c > 0) break;
                 entry = &PlatformConfigFile[0];
+                if (!entry->Value) break;
                 c++;
             }
 
@@ -109,27 +108,8 @@ void Load()
 
 void Save()
 {
-    // TODO not make path search shit tself and pick the wrong ath every damn tiem!!!!!
-    FILE* f;
-    if (LocalFileExists(kConfigFile))
-    {
-        f = melon_fopen_local(kConfigFile, "w");
-        if (!f) return;
-    }
-    else
-    {
-        int dirlen = strlen(EmuDirectory);
-        int filelen = strlen(kConfigFile);
-        char* path = new char[dirlen + 1 + filelen + 1];
-        strncpy(&path[0], EmuDirectory, dirlen);
-        path[dirlen] = '/';
-        strncpy(&path[dirlen+1], kConfigFile, filelen);
-        path[dirlen+1+filelen] = '\0';
-
-        f = melon_fopen(path, "w");
-        delete[] path;
-        if (!f) return;
-    }
+    FILE* f = Platform::OpenLocalFile(kConfigFile, "w");
+    if (!f) return;
 
     ConfigEntry* entry = &ConfigFile[0];
     int c = 0;
@@ -139,6 +119,7 @@ void Save()
         {
             if (c > 0) break;
             entry = &PlatformConfigFile[0];
+            if (!entry->Value) break;
             c++;
         }
 

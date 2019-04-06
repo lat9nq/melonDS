@@ -22,8 +22,7 @@
 #include "NDSCart.h"
 #include "ARM.h"
 #include "CRC32.h"
-
-#include "melon_fopen.h"
+#include "Platform.h"
 
 
 namespace NDSCart_SRAM
@@ -117,7 +116,7 @@ void LoadSave(const char* path, u32 type)
     strncpy(SRAMPath, path, 1023);
     SRAMPath[1023] = '\0';
 
-    FILE* f = melon_fopen(path, "rb");
+    FILE* f = Platform::OpenFile(path, "rb");
     if (f)
     {
         fseek(f, 0, SEEK_END);
@@ -177,7 +176,7 @@ void RelocateSave(const char* path, bool write)
     strncpy(SRAMPath, path, 1023);
     SRAMPath[1023] = '\0';
 
-    FILE* f = melon_fopen(path, "wb");
+    FILE* f = Platform::OpenFile(path, "wb");
     if (!f)
     {
         printf("NDSCart_SRAM::RelocateSave: failed to create new file. fuck\n");
@@ -444,7 +443,7 @@ void Write(u8 val, u32 hold)
 
     if (islast && (CurCmd == 0x02 || CurCmd == 0x0A) && (SRAMLength > 0))
     {
-        FILE* f = melon_fopen(SRAMPath, "wb");
+        FILE* f = Platform::OpenFile(SRAMPath, "wb");
         if (f)
         {
             fwrite(SRAM, SRAMLength, 1, f);
@@ -816,7 +815,7 @@ bool ReadROMParams(u32 gamecode, u32* params)
     // [gamecode] [ROM size] [save type] [reserved]
     // list must be sorted by gamecode
 
-    FILE* f = melon_fopen_local("romlist.bin", "rb");
+    FILE* f = Platform::OpenLocalFile("romlist.bin", "rb");
     if (!f) return false;
 
     fseek(f, 0, SEEK_END);
@@ -872,7 +871,7 @@ bool LoadROM(const char* path, const char* sram, bool direct)
     // TODO: streaming mode? for really big ROMs or systems with limited RAM
     // for now we're lazy
 
-    FILE* f = melon_fopen(path, "rb");
+    FILE* f = Platform::OpenFile(path, "rb");
     if (!f)
     {
         return false;
@@ -1260,8 +1259,14 @@ void WriteROMCnt(u32 val)
     // TODO: advance read position if bit28 is set
 
     u32 xfercycle = (ROMCnt & (1<<27)) ? 8 : 5;
-    u32 cmddelay = 8 + (ROMCnt & 0x1FFF);
-    if (datasize) cmddelay += ((ROMCnt >> 16) & 0x3F);
+    u32 cmddelay = 8;
+
+    // delays are only applied when the WR bit is cleared
+    if (!(ROMCnt & (1<<30)))
+    {
+        cmddelay += (ROMCnt & 0x1FFF);
+        if (datasize) cmddelay += ((ROMCnt >> 16) & 0x3F);
+    }
 
     if (datasize == 0)
         NDS::ScheduleEvent(NDS::Event_ROMTransfer, false, xfercycle*cmddelay, ROMEndTransfer, 0);
@@ -1279,7 +1284,11 @@ u32 ReadROMData()
         {
             u32 xfercycle = (ROMCnt & (1<<27)) ? 8 : 5;
             u32 delay = 4;
-            if (!(DataOutPos & 0x1FF)) delay += ((ROMCnt >> 16) & 0x3F);
+            if (!(ROMCnt & (1<<30)))
+            {
+                if (!(DataOutPos & 0x1FF))
+                    delay += ((ROMCnt >> 16) & 0x3F);
+            }
 
             NDS::ScheduleEvent(NDS::Event_ROMTransfer, false, xfercycle*delay, ROMPrepareData, 0);
         }
