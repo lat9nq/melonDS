@@ -42,9 +42,9 @@ float topX, topY, topWidth, topHeight, botX, botY, botWidth, botHeight;
 
 AppletHookCookie cookie;
 
-int outSamples;
-AudioOutBuffer audioBuffer, *audioReleasedBuffer;
+AudioOutBuffer *audioReleasedBuffer;
 AudioInBuffer micBuffer, *micReleasedBuffer;
+u32 count;
 
 u8 hotkeyMask;
 bool lidClosed;
@@ -120,18 +120,18 @@ const vector<string> settingNames =
 
 const vector<Value> settingValues =
 {
-    { { "Off", "On" },                                                               &Config::DirectBoot },
-    { { "Off", "On" },                                                               &Config::Threaded3D },
-    { { "0%", "25%", "50%", "75%", "100%" },                                         &Config::AudioVolume },
-    { { "None", "Microphone", "White Noise" },                                       &Config::MicInputType },
+    { { "Off", "On" },                                                               &Config::DirectBoot         },
+    { { "Off", "On" },                                                               &Config::Threaded3D         },
+    { { "0%", "25%", "50%", "75%", "100%" },                                         &Config::AudioVolume        },
+    { { "None", "Microphone", "White Noise" },                                       &Config::MicInputType       },
     { { "Off", "On" },                                                               &Config::SavestateRelocSRAM },
-    { { "0", "90", "180", "270" },                                                   &Config::ScreenRotation },
-    { { "0 Pixels", "1 Pixel", "8 Pixels", "64 Pixels", "90 Pixels", "128 Pixels" }, &Config::ScreenGap },
-    { { "Natural", "Vertical", "Horizontal" },                                       &Config::ScreenLayout },
-    { { "Even", "Emphasize Top", "Emphasize Bottom" },                               &Config::ScreenSizing },
-    { { "Off", "On" },                                                               &Config::ScreenFilter },
-    { { "Off", "On" },                                                               &Config::LimitFPS },
-    { { "1020 MHz", "1224 MHz", "1581 MHz", "1785 MHz" },                            &Config::SwitchOverclock }
+    { { "0", "90", "180", "270" },                                                   &Config::ScreenRotation     },
+    { { "0 Pixels", "1 Pixel", "8 Pixels", "64 Pixels", "90 Pixels", "128 Pixels" }, &Config::ScreenGap          },
+    { { "Natural", "Vertical", "Horizontal" },                                       &Config::ScreenLayout       },
+    { { "Even", "Emphasize Top", "Emphasize Bottom" },                               &Config::ScreenSizing       },
+    { { "Off", "On" },                                                               &Config::ScreenFilter       },
+    { { "Off", "On" },                                                               &Config::LimitFPS           },
+    { { "1020 MHz", "1224 MHz", "1581 MHz", "1785 MHz" },                            &Config::SwitchOverclock    }
 };
 
 const vector<string> pauseNames =
@@ -346,25 +346,10 @@ void setScreenLayout()
     setTextureFiltering(Config::ScreenFilter);
 }
 
-void setupAudioBuffer()
-{
-    // Dynamically switch audio sample rate when the system is docked/undocked
-    // For some reason both modes sound best with different sample rates
-    outSamples = (appletGetOperationMode() == AppletOperationMode_Handheld) ? 1440 : 2048;
-    audioBuffer.next = NULL;
-    audioBuffer.buffer = new s16[(outSamples * 2 + 0xFFF) & ~0xFFF];
-    audioBuffer.buffer_size = (outSamples * sizeof(s16) * 2 + 0xFFF) & ~0xFFF;
-    audioBuffer.data_size = outSamples * sizeof(s16) * 2;
-    audioBuffer.data_offset = 0;
-}
-
 void onAppletHook(AppletHookType hook, void *param)
 {
     if (hook == AppletHookType_OnOperationMode || hook == AppletHookType_OnPerformanceMode)
-    {
         pcvSetClockRate(PcvModule_Cpu, clockSpeeds[Config::SwitchOverclock]);
-        setupAudioBuffer();
-    }
 }
 
 void runCore(void *args)
@@ -384,33 +369,30 @@ void runCore(void *args)
 
 void fillAudioBuffer()
 {
-    // Approximate the equivalent sample count at the original rate
-    int samples_in = outSamples * 700 / 1024;
+    // 1024 samples is equal to approximately 700 at the original rate
+    s16 buf_in[700 * 2];
+    s16 *buf_out = (s16*)audioReleasedBuffer->buffer;
 
-    s16 buf_in[samples_in * 2];
-    s16 *buf_out = (s16*)audioBuffer.buffer;
-
-    int num_in = SPU::ReadOutput(buf_in, samples_in);
-    int num_out = outSamples;
+    int num_in = SPU::ReadOutput(buf_in, 700);
 
     int margin = 6;
-    if (num_in < samples_in - margin)
+    if (num_in < 700 - margin)
     {
         int last = num_in - 1;
         if (last < 0)
             last = 0;
 
-        for (int i = num_in; i < samples_in - margin; i++)
+        for (int i = num_in; i < 700 - margin; i++)
             ((u32*)buf_in)[i] = ((u32*)buf_in)[last];
 
-        num_in = samples_in - margin;
+        num_in = 700 - margin;
     }
 
-    float res_incr = (float)num_in / num_out;
+    float res_incr = (float)num_in / 1024;
     float res_timer = 0;
     int res_pos = 0;
 
-    for (int i = 0; i < outSamples; i++)
+    for (int i = 0; i < 1024; i++)
     {
         buf_out[i * 2]     = (buf_in[res_pos * 2]     * Config::AudioVolume * 64) >> 8;
         buf_out[i * 2 + 1] = (buf_in[res_pos * 2 + 1] * Config::AudioVolume * 64) >> 8;
@@ -428,8 +410,9 @@ void audioOutput(void *args)
 {
     while (!(hotkeyMask & BIT(HK_Menu)))
     {
+        audoutWaitPlayFinish(&audioReleasedBuffer, &count, U64_MAX);
         fillAudioBuffer();
-        audoutPlayBuffer(&audioBuffer, &audioReleasedBuffer);
+        audoutAppendAudioOutBuffer(audioReleasedBuffer);
     }
 }
 
@@ -459,15 +442,29 @@ void micInput(void *args)
 void startCore(bool reset)
 {
     setScreenLayout();
-    setupAudioBuffer();
 
     appletLockExit();
     appletHook(&cookie, onAppletHook, NULL);
+
+    if (reset)
+    {
+        sramPath = romPath.substr(0, romPath.rfind(".")) + ".sav";
+        statePath = romPath.substr(0, romPath.rfind(".")) + ".mln";
+        sramStatePath = statePath + ".sav";
+
+        NDS::Init();
+        NDS::LoadROM(romPath.c_str(), sramPath.c_str(), Config::DirectBoot);
+    }
+
+    Thread core;
+    threadCreate(&core, runCore, NULL, 0x80000, 0x30, 1);
+    threadStart(&core);
 
     if (Config::AudioVolume > 0)
     {
         audoutInitialize();
         audoutStartAudioOut();
+        setupAudioBuffer();
 
         Thread audio;
         threadCreate(&audio, audioOutput, NULL, 0x80000, 0x2F, 0);
@@ -487,20 +484,6 @@ void startCore(bool reset)
         pcvInitialize();
         pcvSetClockRate(PcvModule_Cpu, clockSpeeds[Config::SwitchOverclock]);
     }
-
-    if (reset)
-    {
-        sramPath = romPath.substr(0, romPath.rfind(".")) + ".sav";
-        statePath = romPath.substr(0, romPath.rfind(".")) + ".mln";
-        sramStatePath = statePath + ".sav";
-
-        NDS::Init();
-        NDS::LoadROM(romPath.c_str(), sramPath.c_str(), Config::DirectBoot);
-    }
-
-    Thread core;
-    threadCreate(&core, runCore, NULL, 0x80000, 0x30, 1);
-    threadStart(&core);
 }
 
 void pauseCore()
