@@ -16,8 +16,9 @@
     with melonDS. If not, see http://www.gnu.org/licenses/.
 */
 
+#include <cstdio>
+#include <string>
 #include <malloc.h>
-#include <stdio.h>
 #include <switch.h>
 
 // Deal with conflicting typedefs
@@ -32,6 +33,33 @@ namespace Platform
 
 void StopEmu()
 {
+}
+
+FILE* OpenFile(const char* path, const char* mode, bool mustexist)
+{
+    FILE *file;
+
+    if (mustexist)
+    {
+        file = fopen(path, "rb");
+        if (file)
+            file = freopen(path, mode, file);
+    }
+    else
+    {
+        file = fopen(path, mode);
+    }
+
+    return file;
+}
+
+FILE* OpenLocalFile(const char* path, const char* mode)
+{
+    // Check the emulator directory
+    std::string name = "sdmc:/switch/melonds/";
+    name += path;
+    FILE *file = OpenFile(name.c_str(), mode, false);
+    return file;
 }
 
 void* Thread_Create(void (*func)())

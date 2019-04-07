@@ -27,15 +27,14 @@
 #define s64 s64_
 
 #include "PlatformConfig.h"
+#include "../Platform.h"
 #include "../Savestate.h"
 #include "../GPU.h"
 #include "../NDS.h"
 #include "../SPU.h"
-#include "../melon_fopen.h"
 
 u32 *folderIcon;
 string romPath, sramPath, statePath, sramStatePath;
-char *EmuDirectory = (char*)"sdmc:/switch/melonds";
 
 u32 displayBuffer[256 * 384];
 float topX, topY, topWidth, topHeight, botX, botY, botWidth, botHeight;
@@ -189,15 +188,6 @@ u32 *romIcon(string filename)
                 memcpy(&tex[256 * i + 32 * j + 8 * k], &tiles[256 * i + 8 * j + 64 * k], 8 * sizeof(u32));
 
     return tex;
-}
-
-bool LocalFileExists(const char *name)
-{
-    FILE *file = melon_fopen_local(name, "rb");
-    if (!file)
-        return false;
-    fclose(file);
-    return true;
 }
 
 void swapValues(float *val1, float *val2)
@@ -684,7 +674,8 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    if (!LocalFileExists("bios7.bin") || !LocalFileExists("bios9.bin") || !LocalFileExists("firmware.bin"))
+    if (!Platform::LocalFileExists("bios7.bin") || !Platform::LocalFileExists("bios9.bin") ||
+        !Platform::LocalFileExists("firmware.bin"))
     {
         vector<string> message =
         {
