@@ -41,7 +41,7 @@ TARGET		:=	$(notdir $(CURDIR))
 BUILD		:=	build
 SOURCES		:=	src src/switch
 DATA		:=	data
-INCLUDES	:=	include
+INCLUDES	:=	src src/switch
 ROMFS		:=	romfs
 
 APP_TITLE   := melonDS
