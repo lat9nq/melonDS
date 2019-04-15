@@ -176,7 +176,7 @@ u32 *romIcon(string filename)
         u8 r = ((palette[indexes[i]] >> 0)  & 0x1F) * 255 / 31;
         u8 g = ((palette[indexes[i]] >> 5)  & 0x1F) * 255 / 31;
         u8 b = ((palette[indexes[i]] >> 10) & 0x1F) * 255 / 31;
-        tiles[i] = (r << 24) | (g << 16) | (b << 8);
+        tiles[i] = rgbaToU32(r, g, b, 255);
     }
 
     // Rearrange the pixels from 8x8 tiles to a 32x32 texture
@@ -780,12 +780,12 @@ int main(int argc, char **argv)
         }
 
         clearDisplay(0);
-        drawImage(displayBuffer, 256, 192, Config::ScreenRotation, true, topX, topY, topWidth, topHeight);
-        drawImage(&displayBuffer[256 * 192], 256, 192, Config::ScreenRotation, true, botX, botY, botWidth, botHeight);
+        drawImage(displayBuffer, 256, 192, true, topX, topY, topWidth, topHeight, Config::ScreenRotation);
+        drawImage(&displayBuffer[256 * 192], 256, 192, true, botX, botY, botWidth, botHeight, Config::ScreenRotation);
         refreshDisplay();
     }
 
-    deinitRenderer();
     pauseCore();
+    deinitRenderer();
     return 0;
 }
