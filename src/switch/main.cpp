@@ -33,7 +33,6 @@
 #include "../NDS.h"
 #include "../SPU.h"
 
-u32 *folderIcon;
 string romPath, sramPath, statePath, sramStatePath;
 
 u32 displayBuffer[256 * 384];
@@ -447,7 +446,7 @@ void startCore(bool reset)
     }
 
     Thread core;
-    threadCreate(&core, runCore, NULL, 0x80000, 0x30, 1);
+    threadCreate(&core, runCore, NULL, 0x8000, 0x30, 1);
     threadStart(&core);
 
     if (Config::AudioVolume > 0)
@@ -457,7 +456,7 @@ void startCore(bool reset)
         setupAudioBuffer();
 
         Thread audio;
-        threadCreate(&audio, audioOutput, NULL, 0x80000, 0x2F, 0);
+        threadCreate(&audio, audioOutput, NULL, 0x8000, 0x2F, 0);
         threadStart(&audio);
     }
     if (Config::MicInputType == 1)
@@ -466,7 +465,7 @@ void startCore(bool reset)
         audinStartAudioIn();
 
         Thread mic;
-        threadCreate(&mic, micInput, NULL, 0x80000, 0x30, 0);
+        threadCreate(&mic, micInput, NULL, 0x8000, 0x30, 0);
         threadStart(&mic);
     }
     if (Config::SwitchOverclock > 0)
@@ -663,11 +662,6 @@ int main(int argc, char **argv)
         Config::Save();
     }
 
-    romfsInit();
-    string theme = (systemTheme == ColorSetId_Light) ? "light" : "dark";
-    folderIcon = bmpTexture("romfs:/folder-" + theme + ".bmp");
-    romfsExit();
-
     if (!fileBrowser())
     {
         deinitRenderer();
@@ -786,12 +780,12 @@ int main(int argc, char **argv)
         }
 
         clearDisplay(0);
-        drawTexture(displayBuffer, 256, 192, Config::ScreenRotation, true, topX, topY, topWidth, topHeight);
-        drawTexture(&displayBuffer[256 * 192], 256, 192, Config::ScreenRotation, true, botX, botY, botWidth, botHeight);
+        drawImage(displayBuffer, 256, 192, Config::ScreenRotation, true, topX, topY, topWidth, topHeight);
+        drawImage(&displayBuffer[256 * 192], 256, 192, Config::ScreenRotation, true, botX, botY, botWidth, botHeight);
         refreshDisplay();
     }
 
-    pauseCore();
     deinitRenderer();
+    pauseCore();
     return 0;
 }
