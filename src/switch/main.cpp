@@ -33,6 +33,12 @@
 #include "../NDS.h"
 #include "../SPU.h"
 
+typedef struct
+{
+    vector<string> names;
+    int *value;
+} SettingValue;
+
 string romPath, sramPath, statePath, sramStatePath;
 
 u32 displayBuffer[256 * 384];
@@ -65,13 +71,11 @@ const vector<string> controlNames =
     "Y Button",
     "Close/Open Lid",
     "Microphone",
-    "Pause Menu",
-    "Reset to Defaults"
+    "Pause Menu"
 };
 
-const vector<string> controlValueNames =
+const vector<string> controlValues =
 {
-    "Default",
     "A Button", "B Button", "X Button", "Y Button",
     "Left Stick Click", "Right Stick Click",
     "L Button", "R Button", "ZL Button", "ZR Button",
@@ -79,25 +83,6 @@ const vector<string> controlValueNames =
     "D-Pad Left", "D-Pad Up", "D-Pad Right", "D-Pad Down",
     "Left Stick Left", "Left Stick Up", "Left Stick Right", "Left Stick Down",
     "Right Stick Left", "Right Stick Up", "Right Stick Right", "Right Stick Down"
-};
-
-const vector<Value> controlValues =
-{
-    { controlValueNames, &Config::Mapping[0]         },
-    { controlValueNames, &Config::Mapping[1]         },
-    { controlValueNames, &Config::Mapping[2]         },
-    { controlValueNames, &Config::Mapping[3]         },
-    { controlValueNames, &Config::Mapping[4]         },
-    { controlValueNames, &Config::Mapping[5]         },
-    { controlValueNames, &Config::Mapping[6]         },
-    { controlValueNames, &Config::Mapping[7]         },
-    { controlValueNames, &Config::Mapping[8]         },
-    { controlValueNames, &Config::Mapping[9]         },
-    { controlValueNames, &Config::Mapping[10]        },
-    { controlValueNames, &Config::Mapping[11]        },
-    { controlValueNames, &Config::HKMapping[HK_Lid]  },
-    { controlValueNames, &Config::HKMapping[HK_Mic]  },
-    { controlValueNames, &Config::HKMapping[HK_Menu] }
 };
 
 const vector<string> settingNames =
@@ -116,7 +101,7 @@ const vector<string> settingNames =
     "Switch Overclock"
 };
 
-const vector<Value> settingValues =
+const vector<SettingValue> settingValues =
 {
     { { "Off", "On" },                                                               &Config::DirectBoot         },
     { { "Off", "On" },                                                               &Config::Threaded3D         },
@@ -343,7 +328,7 @@ void onAppletHook(AppletHookType hook, void *param)
 
 void runCore(void *args)
 {
-    while (!(hotkeyMask & BIT(HK_Menu)))
+    while (!(hotkeyMask & BIT(2)))
     {
         chrono::steady_clock::time_point start = chrono::steady_clock::now();
 
@@ -397,7 +382,7 @@ void fillAudioBuffer()
 
 void audioOutput(void *args)
 {
-    while (!(hotkeyMask & BIT(HK_Menu)))
+    while (!(hotkeyMask & BIT(2)))
     {
         audoutWaitPlayFinish(&audioReleasedBuffer, &count, U64_MAX);
         fillAudioBuffer();
@@ -407,9 +392,9 @@ void audioOutput(void *args)
 
 void micInput(void *args)
 {
-    while (!(hotkeyMask & BIT(HK_Menu)))
+    while (!(hotkeyMask & BIT(2)))
     {
-        if (Config::MicInputType == 0 || !(hotkeyMask & BIT(HK_Mic)))
+        if (Config::MicInputType == 0 || !(hotkeyMask & BIT(1)))
         {
             NDS::MicInputFrame(NULL, 0);
         }
@@ -493,28 +478,53 @@ void controlsMenu()
 
     while (true)
     {
-        u32 pressed = menuScreen("Controls", "", "", {}, controlNames, controlValues, &selection);
-
-        if (pressed & KEY_A)
+        vector<string> controlSubitems;
+        for (unsigned int i = 0; i < controlNames.size(); i++)
         {
-            if (selection == 15) // Reset to defaults
+            if (Config::Mapping[i] == 0)
             {
-                for (unsigned int i = 0; i < controlValues.size(); i++)
-                    *controlValues[i].value = 0;
+                controlSubitems.push_back("None");
             }
             else
             {
-                pressed = messageScreen("Controls", {"Press a button to map it to: " + controlNames[selection]}, false);
-                for (unsigned int i = 0; i < controlValueNames.size(); i++)
+                string subitem;
+                int count = 0;
+                for (unsigned int j = 0; j < controlValues.size(); j++)
                 {
-                    if (pressed & BIT(i))
-                        *controlValues[selection].value = i + 1;
+                    if (Config::Mapping[i] & BIT(j))
+                    {
+                        count++;
+                        if (count < 5)
+                        {
+                            subitem += controlValues[j] + ", ";
+                        }
+                        else
+                        {
+                            subitem += "...";
+                            break;
+                        }
+                    }
                 }
+                controlSubitems.push_back(subitem.substr(0, subitem.size() - ((count == 5) ? 0 : 2)));
             }
+        }
+
+        u32 pressed = menuScreen("Controls", "", "Clear", {}, controlNames, controlSubitems, &selection);
+
+        if (pressed & KEY_A)
+        {
+            pressed = 0;
+            while (pressed == 0 || pressed > KEY_RSTICK_DOWN)
+                pressed = messageScreen("Controls", {"Press a button to add a mapping to: " + controlNames[selection]}, false);
+            Config::Mapping[selection] |= pressed;
         }
         else if (pressed & KEY_B)
         {
             return;
+        }
+        else if ((pressed & KEY_X) && !(pressed & KEY_TOUCH))
+        {
+            Config::Mapping[selection] = 0;
         }
     }
 }
@@ -525,7 +535,11 @@ void settingsMenu()
 
     while (true)
     {
-        u32 pressed = menuScreen("Settings", "", "Controls", {}, settingNames, settingValues, &selection);
+        vector<string> settingSubitems;
+        for (unsigned int i = 0; i < settingNames.size(); i++)
+            settingSubitems.push_back(settingValues[i].names[*settingValues[i].value]);
+
+        u32 pressed = menuScreen("Settings", "", "Controls", {}, settingNames, settingSubitems, &selection);
 
         if (pressed & KEY_A)
         {
@@ -632,7 +646,7 @@ bool pauseMenu()
                 NDS::DeInit();
                 if (fileBrowser())
                 {
-                    hotkeyMask &= ~BIT(HK_Menu);
+                    hotkeyMask &= ~BIT(2);
                     startCore(true);
                     return true;
                 }
@@ -645,7 +659,7 @@ bool pauseMenu()
         }
     }
 
-    hotkeyMask &= ~BIT(HK_Menu);
+    hotkeyMask &= ~BIT(2);
     startCore(false);
     return true;
 }
@@ -693,14 +707,6 @@ int main(int argc, char **argv)
 
     startCore(true);
 
-    u32 defaultkeys[] =
-    {
-        KEY_A, KEY_B, KEY_MINUS, KEY_PLUS,
-        KEY_RIGHT, KEY_LEFT, KEY_UP, KEY_DOWN,
-        KEY_ZR, KEY_ZL, KEY_X, KEY_Y,
-        KEY_RSTICK, KEY_LSTICK, (KEY_L | KEY_R)
-    };
-
     while (appletMainLoop())
     {
         hidScanInput();
@@ -710,31 +716,28 @@ int main(int argc, char **argv)
         // Check for button input
         for (int i = 0; i < 12; i++)
         {
-            u32 key = ((Config::Mapping[i] == 0) ? defaultkeys[i] : BIT(Config::Mapping[i] - 1));
-            if (pressed & key)
+            if (pressed & Config::Mapping[i])
                 NDS::PressKey(i > 9 ? i + 6 : i);
-            else if (released & key)
+            else if (released & Config::Mapping[i])
                 NDS::ReleaseKey(i > 9 ? i + 6 : i);
         }
 
         // Check for hotkey input
-        for (int i = 0; i < HK_MAX; i++)
+        for (int i = 12; i < 15; i++)
         {
-            u32 key = ((Config::HKMapping[i] == 0) ? defaultkeys[i + 12] : BIT(Config::HKMapping[i] - 1));
-            if (pressed & key)
-                hotkeyMask |= BIT(i);
-            else if (released & key)
-                hotkeyMask &= ~BIT(i);
+            if (pressed & Config::Mapping[i])
+                hotkeyMask |= BIT(i - 12);
+            else if (released & Config::Mapping[i])
+                hotkeyMask &= ~BIT(i - 12);
         }
 
-        if (hotkeyMask & BIT(HK_Lid))
+        if (hotkeyMask & BIT(0)) // Lid close/open
         {
             lidClosed = !lidClosed;
             NDS::SetLidClosed(lidClosed);
-            hotkeyMask &= ~BIT(HK_Lid);
+            hotkeyMask &= ~BIT(0);
         }
-
-        if (hotkeyMask & BIT(HK_Menu))
+        else if (hotkeyMask & BIT(2)) // Pause menu
         {
             if (!pauseMenu())
                 break;

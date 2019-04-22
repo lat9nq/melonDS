@@ -17,14 +17,18 @@
 */
 
 #include <stdio.h>
+#include <switch.h>
+
+// Deal with conflicting typedefs
+#define u64 u64_
+#define s64 s64_
+
 #include "PlatformConfig.h"
 
 namespace Config
 {
 
-int Mapping[12];
-
-int HKMapping[HK_MAX];
+int Mapping[15];
 
 int ScreenRotation;
 int ScreenGap;
@@ -47,22 +51,21 @@ int SwitchOverclock;
 
 ConfigEntry PlatformConfigFile[] =
 {
-    {"Joy_A",      0, &Mapping[0],  0, NULL, 0},
-    {"Joy_B",      0, &Mapping[1],  0, NULL, 0},
-    {"Joy_Select", 0, &Mapping[2],  0, NULL, 0},
-    {"Joy_Start",  0, &Mapping[3],  0, NULL, 0},
-    {"Joy_Right",  0, &Mapping[4],  0, NULL, 0},
-    {"Joy_Left",   0, &Mapping[5],  0, NULL, 0},
-    {"Joy_Up",     0, &Mapping[6],  0, NULL, 0},
-    {"Joy_Down",   0, &Mapping[7],  0, NULL, 0},
-    {"Joy_R",      0, &Mapping[8],  0, NULL, 0},
-    {"Joy_L",      0, &Mapping[9],  0, NULL, 0},
-    {"Joy_X",      0, &Mapping[10], 0, NULL, 0},
-    {"Joy_Y",      0, &Mapping[11], 0, NULL, 0},
-
-    {"HKJoy_Lid",  0, &HKMapping[HK_Lid],  0, NULL, 0},
-    {"HKJoy_Mic",  0, &HKMapping[HK_Mic],  0, NULL, 0},
-    {"HKJoy_Menu", 0, &HKMapping[HK_Menu], 0, NULL, 0},
+    {"Joy_A",      0, &Mapping[0],  KEY_A,                         NULL, 0},
+    {"Joy_B",      0, &Mapping[1],  KEY_B,                         NULL, 0},
+    {"Joy_Select", 0, &Mapping[2],  KEY_MINUS,                     NULL, 0},
+    {"Joy_Start",  0, &Mapping[3],  KEY_PLUS,                      NULL, 0},
+    {"Joy_Right",  0, &Mapping[4],  KEY_DRIGHT | KEY_LSTICK_RIGHT, NULL, 0},
+    {"Joy_Left",   0, &Mapping[5],  KEY_DLEFT  | KEY_LSTICK_LEFT,  NULL, 0},
+    {"Joy_Up",     0, &Mapping[6],  KEY_DUP    | KEY_LSTICK_UP,    NULL, 0},
+    {"Joy_Down",   0, &Mapping[7],  KEY_DDOWN  | KEY_LSTICK_DOWN,  NULL, 0},
+    {"Joy_R",      0, &Mapping[8],  KEY_ZR,                        NULL, 0},
+    {"Joy_L",      0, &Mapping[9],  KEY_ZL,                        NULL, 0},
+    {"Joy_X",      0, &Mapping[10], KEY_X,                         NULL, 0},
+    {"Joy_Y",      0, &Mapping[11], KEY_Y,                         NULL, 0},
+    {"Joy_Lid",    0, &Mapping[12], KEY_RSTICK,                    NULL, 0},
+    {"Joy_Mic",    0, &Mapping[13], KEY_LSTICK,                    NULL, 0},
+    {"Joy_Menu",   0, &Mapping[14], KEY_L | KEY_R,                 NULL, 0},
 
     {"ScreenRotation", 0, &ScreenRotation, 0, NULL, 0},
     {"ScreenGap",      0, &ScreenGap,      0, NULL, 0},
@@ -79,7 +82,7 @@ ConfigEntry PlatformConfigFile[] =
     {"AudioVolume",  0, &AudioVolume,  4, NULL, 0},
     {"MicInputType", 0, &MicInputType, 1, NULL, 0},
 
-    {"LastROMFolder", 1, LastROMFolder, 0, "sdmc:/", 511},
+    {"LastROMFolder", 1, LastROMFolder, 0, (char*)"sdmc:/", 511},
 
     {"SwitchOverclock", 0, &SwitchOverclock, 0, NULL, 0},
 

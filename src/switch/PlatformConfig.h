@@ -21,21 +21,10 @@
 
 #include "../Config.h"
 
-enum
-{
-    HK_Lid = 0,
-    HK_Mic,
-    HK_Menu,
-
-    HK_MAX
-};
-
 namespace Config
 {
 
-extern int Mapping[12];
-
-extern int HKMapping[HK_MAX];
+extern int Mapping[15];
 
 extern int ScreenRotation;
 extern int ScreenGap;
