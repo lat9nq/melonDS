@@ -89,6 +89,7 @@ const vector<string> settingNames =
 {
     "Boot Game Directly",
     "Threaded 3D Renderer",
+    "Frameskip",
     "Audio Volume",
     "Microphone Input",
     "Separate Savefiles from Savestates",
@@ -105,6 +106,7 @@ const vector<SettingValue> settingValues =
 {
     { { "Off", "On" },                                                               &Config::DirectBoot         },
     { { "Off", "On" },                                                               &Config::Threaded3D         },
+    { { "0", "1", "2", "3", "4", "5", "6", "7", "8", "9" },                          &Config::Frameskip          },
     { { "0%", "25%", "50%", "75%", "100%" },                                         &Config::AudioVolume        },
     { { "None", "Microphone", "White Noise" },                                       &Config::MicInputType       },
     { { "Off", "On" },                                                               &Config::SavestateRelocSRAM },
