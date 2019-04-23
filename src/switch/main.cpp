@@ -44,6 +44,8 @@ string romPath, sramPath, statePath, sramStatePath;
 u32 displayBuffer[256 * 384];
 float topX, topY, topWidth, topHeight, botX, botY, botWidth, botHeight;
 
+Thread core, audio, mic;
+ClkrstSession cpuSession;
 AppletHookCookie cookie;
 
 AudioOutBuffer *audioReleasedBuffer;
@@ -325,7 +327,10 @@ void setScreenLayout()
 void onAppletHook(AppletHookType hook, void *param)
 {
     if (hook == AppletHookType_OnOperationMode || hook == AppletHookType_OnPerformanceMode)
-        pcvSetClockRate(PcvModule_Cpu, clockSpeeds[Config::SwitchOverclock]);
+    {
+        if (R_FAILED(pcvSetClockRate(PcvModule_Cpu, clockSpeeds[Config::SwitchOverclock])))
+            clkrstSetClockRate(&cpuSession, clockSpeeds[Config::SwitchOverclock]);
+    }
 }
 
 void runCore(void *args)
@@ -432,7 +437,6 @@ void startCore(bool reset)
         NDS::LoadROM(romPath.c_str(), sramPath.c_str(), Config::DirectBoot);
     }
 
-    Thread core;
     threadCreate(&core, runCore, NULL, 0x8000, 0x30, 1);
     threadStart(&core);
 
@@ -441,8 +445,6 @@ void startCore(bool reset)
         audoutInitialize();
         audoutStartAudioOut();
         setupAudioBuffer();
-
-        Thread audio;
         threadCreate(&audio, audioOutput, NULL, 0x8000, 0x2F, 0);
         threadStart(&audio);
     }
@@ -450,21 +452,31 @@ void startCore(bool reset)
     {
         audinInitialize();
         audinStartAudioIn();
-
-        Thread mic;
         threadCreate(&mic, micInput, NULL, 0x8000, 0x30, 0);
         threadStart(&mic);
     }
     if (Config::SwitchOverclock > 0)
     {
         pcvInitialize();
-        pcvSetClockRate(PcvModule_Cpu, clockSpeeds[Config::SwitchOverclock]);
+        if (R_FAILED(pcvSetClockRate(PcvModule_Cpu, clockSpeeds[Config::SwitchOverclock])))
+        {
+            clkrstInitialize();
+            clkrstOpenSession(&cpuSession, PcvModule_Cpu);
+            clkrstSetClockRate(&cpuSession, clockSpeeds[Config::SwitchOverclock]);
+        }
     }
 }
 
 void pauseCore()
 {
-    pcvSetClockRate(PcvModule_Cpu, clockSpeeds[0]);
+    threadWaitForExit(&core);
+    threadWaitForExit(&audio);
+    threadWaitForExit(&mic);
+    if (R_FAILED(pcvSetClockRate(PcvModule_Cpu, clockSpeeds[0])))
+    {
+        clkrstSetClockRate(&cpuSession, clockSpeeds[0]);
+        clkrstExit();
+    }
     pcvExit();
     audinStopAudioIn();
     audinExit();
