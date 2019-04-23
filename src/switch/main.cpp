@@ -802,6 +802,7 @@ int main(int argc, char **argv)
         refreshDisplay();
     }
 
+    hotkeyMask |= BIT(2);
     pauseCore();
     deinitRenderer();
     return 0;
