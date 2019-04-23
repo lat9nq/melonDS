@@ -46,7 +46,7 @@ ROMFS		:=	romfs
 
 APP_TITLE   := melonDS
 APP_AUTHOR  := Hydr8gon, Arisotura
-APP_VERSION := 0.7.4
+APP_VERSION := 0.7.4-2
 ICON        := icon/melon.jpg
 
 #---------------------------------------------------------------------------------
