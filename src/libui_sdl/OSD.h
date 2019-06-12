@@ -16,16 +16,20 @@
     with melonDS. If not, see http://www.gnu.org/licenses/.
 */
 
-#ifndef DLGWIFISETTINGS_H
-#define DLGWIFISETTINGS_H
+#ifndef OSD_H
+#define OSD_H
 
-namespace DlgWifiSettings
+namespace OSD
 {
 
-void Open();
-void Close();
+bool Init(bool opengl);
+void DeInit(bool opengl);
+
+void AddMessage(u32 color, const char* text);
+
+void WindowResized(bool opengl);
+void Update(bool opengl, uiAreaDrawParams* params);
 
 }
 
-#endif // DLGWIFISETTINGS_H
-
+#endif // OSD_H

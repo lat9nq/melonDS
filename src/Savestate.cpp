@@ -47,9 +47,9 @@
     * different minor means adjustments may have to be made
 */
 
-Savestate::Savestate(char* filename, bool save)
+Savestate::Savestate(const char* filename, bool save)
 {
-    char* magic = "MELN";
+    const char* magic = "MELN";
 
     Error = false;
 
@@ -110,7 +110,12 @@ Savestate::Savestate(char* filename, bool save)
         }
 
         fread(&VersionMinor, 2, 1, file);
-        // TODO: handle it???
+        if (VersionMinor > SAVESTATE_MINOR)
+        {
+            printf("savestate: state from the future, %d > %d\n", VersionMinor, SAVESTATE_MINOR);
+            Error = true;
+            return;
+        }
 
         buf = 0;
         fread(&buf, 4, 1, file);
@@ -153,7 +158,7 @@ Savestate::~Savestate()
     if (file) fclose(file);
 }
 
-void Savestate::Section(char* magic)
+void Savestate::Section(const char* magic)
 {
     if (Error) return;
 

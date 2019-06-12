@@ -129,12 +129,12 @@ void Reset()
     fclose(f);
 
     // take a backup
-    char* firmbkp = "firmware.bin.bak";
-    f = fopen(firmbkp, "rb");
+    const char* firmbkp = "firmware.bin.bak";
+    f = Platform::OpenLocalFile(firmbkp, "rb");
     if (f) fclose(f);
     else
     {
-        f = fopen(firmbkp, "wb");
+        f = Platform::OpenLocalFile(firmbkp, "wb");
         fwrite(Firmware, 1, FirmwareLength, f);
         fclose(f);
     }

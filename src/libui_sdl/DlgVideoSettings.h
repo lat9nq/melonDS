@@ -16,10 +16,10 @@
     with melonDS. If not, see http://www.gnu.org/licenses/.
 */
 
-#ifndef DLGWIFISETTINGS_H
-#define DLGWIFISETTINGS_H
+#ifndef DLGVIDEOSETTINGS_H
+#define DLGVIDEOSETTINGS_H
 
-namespace DlgWifiSettings
+namespace DlgVideoSettings
 {
 
 void Open();
@@ -27,5 +27,4 @@ void Close();
 
 }
 
-#endif // DLGWIFISETTINGS_H
-
+#endif // DLGVIDEOSETTINGS_H

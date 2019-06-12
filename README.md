@@ -2,7 +2,7 @@
 <h2 align="center"><b>melonDS</b></h2>
 <p align="center">
 <a href="http://melonds.kuribo64.net/" alt="melonDS website"><img src="https://img.shields.io/badge/website-melonds.kuribo64.net-%2331352e.svg"></a>
-<a href="http://melonds.kuribo64.net/downloads.php" alt="Release: 0.7.4"><img src="https://img.shields.io/badge/release-0.7.4-%235c913b.svg"></a>
+<a href="http://melonds.kuribo64.net/downloads.php" alt="Release: 0.8.1"><img src="https://img.shields.io/badge/release-0.8.1-%235c913b.svg"></a>
 <a href="https://www.gnu.org/licenses/gpl-3.0" alt="License: GPLv3"><img src="https://img.shields.io/badge/License-GPL%20v3-%23ff554d.svg"></a>
 <a href="https://kiwiirc.com/client/irc.badnik.net/?nick=IRC-Source_?#melonds" alt="IRC channel: #melonds"><img src="https://img.shields.io/badge/IRC%20chat-%23melonds-%23dd2e44.svg"></a>
 </p>
@@ -38,7 +38,7 @@ As for the rest, the interface should be pretty straightforward. If you have a q
 * Install dependencies:
 
 ```sh
-sudo apt-get install libpcap0.8-dev libcurl4-gnutls-dev libsdl2-dev gtk+-3.0
+sudo apt-get install gtk+-3.0 libcurl4-gnutls-dev libpcap0.8-dev libsdl2-dev
 ```
 
 * Compile:
@@ -47,22 +47,37 @@ sudo apt-get install libpcap0.8-dev libcurl4-gnutls-dev libsdl2-dev gtk+-3.0
 mkdir -p build
 cd build
 cmake ..
-make
+make -j$(nproc --all)
 ```
-
-
 
 ### Windows:
 
  * use CodeBlocks
- * or receive golden cookies if you get Cmake to work
 
-Build system is not set in stone.
+#### MSYS2 and CMake
+
+1. Install [MSYS2](https://www.msys2.org/)
+2. Open the **MSYS2 MinGW 64-bit** terminal
+3. Update the packages using `pacman -Syu` and reopen the terminal if it asks you to
+4. Install dependencies: `pacman -S git make mingw-w64-x86_64-{cmake,mesa,SDL2,toolchain}`
+5. Run the following commands
+   ```bash
+   git clone https://github.com/Arisotura/melonDS.git
+   cd melonDS
+   mkdir build
+   cd build
+   cmake .. -G "MSYS Makefiles"
+   make -j$(nproc --all)
+   ../msys-dist.sh
+   ```
+
+If everything went well, melonDS and the libraries it needs should now be in the `dist` folder.
 
 ## TODO LIST
 
+ * DSi emulation
+ * the impossible quest of pixel-perfect 3D graphics
  * improve libui and the emulator UI
- * hardware renderer for 3D (w/ upscaling and fancy shit)
  * support for rendering screens to separate windows
  * emulating some fancy addons
  * other non-core shit (debugger, graphics viewers, cheat crapo, etc)

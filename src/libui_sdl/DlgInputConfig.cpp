@@ -29,7 +29,10 @@
 #include "DlgInputConfig.h"
 
 
+extern int JoystickID;
 extern SDL_Joystick* Joystick;
+
+extern void OpenJoystick();
 
 
 namespace DlgInputConfig
@@ -49,6 +52,9 @@ typedef struct
 
     int pollid;
     uiButton* pollbtn;
+    SDL_TimerID timer;
+
+    int axes_rest[16];
 
 } InputDlgData;
 
@@ -58,11 +64,58 @@ char dskeylabels[12][8] = {"A:", "B:", "Select:", "Start:", "Right:", "Left:", "
 
 int identity[32] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
 
-char hotkeylabels[HK_MAX][32] = {"Close/open lid:", "Microphone:"};
+char hotkeylabels[HK_MAX][32] =
+{
+    "Close/open lid:",
+    "Microphone:",
+    "Pause/resume:",
+    "Reset:",
+    "Fast forward:",
+    "Fast forward (toggle):"
+};
 
 int openedmask;
 InputDlgData inputdlg[2];
 
+
+void KeyMappingName(int id, char* str)
+{
+    if (id < 0)
+    {
+        strcpy(str, "None");
+        return;
+    }
+
+    int key = id & 0xFFFF;
+    char* keyname = uiKeyName(key);
+    strncpy(str, keyname, 63); str[63] = '\0';
+    uiFreeText(keyname);
+
+    int mod = id >> 16;
+
+    if      (key == 0x11D) mod = 0;
+    else if (key == 0x138) mod = 0;
+    else if (key == 0x036) mod = 0;
+
+    if (mod != 0)
+    {
+        // CTRL / ALT / SHIFT
+        const int modscan[] = {0x1D, 0x38, 0x2A};
+        char tmp[64];
+
+        for (int m = 2; m >= 0; m--)
+        {
+            if (!(mod & (1<<m))) continue;
+
+            char* modname = uiKeyName(modscan[m]);
+            memcpy(tmp, str, 64);
+            snprintf(str, 64, "%s+%s", modname, tmp);
+            uiFreeText(modname);
+        }
+    }
+
+    str[63] = '\0';
+}
 
 void JoyMappingName(int id, char* str)
 {
@@ -74,17 +127,34 @@ void JoyMappingName(int id, char* str)
 
     if (id & 0x100)
     {
+        int hatnum = ((id >> 4) & 0xF) + 1;
+
         switch (id & 0xF)
         {
-        case 0x1: strcpy(str, "Up"); break;
-        case 0x2: strcpy(str, "Right"); break;
-        case 0x4: strcpy(str, "Down"); break;
-        case 0x8: strcpy(str, "Left"); break;
+        case 0x1: sprintf(str, "Hat %d up", hatnum); break;
+        case 0x2: sprintf(str, "Hat %d right", hatnum); break;
+        case 0x4: sprintf(str, "Hat %d down", hatnum); break;
+        case 0x8: sprintf(str, "Hat %d left", hatnum); break;
         }
     }
     else
     {
-        sprintf(str, "Button %d", id+1);
+        sprintf(str, "Button %d", (id & 0xFFFF) + 1);
+    }
+
+    if (id & 0x10000)
+    {
+        int axisnum = ((id >> 24) & 0xF) + 1;
+
+        char tmp[64];
+        memcpy(tmp, str, 64);
+
+        switch ((id >> 20) & 0xF)
+        {
+        case 0: sprintf(str, "%s / Axis %d +", tmp, axisnum); break;
+        case 1: sprintf(str, "%s / Axis %d -", tmp, axisnum); break;
+        case 2: sprintf(str, "%s / Trigger %d", tmp, axisnum); break;
+        }
     }
 }
 
@@ -116,25 +186,27 @@ int OnAreaKeyEvent(uiAreaHandler* handler, uiArea* area, uiAreaKeyEvent* evt)
     if (dlg->pollid < 0)
         return 0;
 
+    if (evt->Scancode == 0x1D) // CTRL
+        return 1;
     if (evt->Scancode == 0x38) // ALT
-        return 0;
-    if (evt->Modifiers == 0x2) // ALT+key
-        return 0;
+        return 1;
+    if (evt->Scancode == 0x2A) // SHIFT
+        return 1;
 
     if (dlg->pollid > 12)
     {
         if (dlg->pollid < 0x100) return 0;
         int id = dlg->pollid & 0xFF;
         if (id > 12) return 0;
-        if (evt->Scancode != 0x1) // ESC
+        if (evt->Scancode != 0x1 || evt->Modifiers != 0) // ESC
         {
-            if (evt->Scancode == 0xE) // backspace
+            if (evt->Scancode == 0xE && evt->Modifiers == 0) // backspace
                 dlg->joymap[id] = -1;
             else
                 return 1;
         }
 
-        char keyname[16];
+        char keyname[64];
         JoyMappingName(dlg->joymap[id], keyname);
         uiButtonSetText(dlg->pollbtn, keyname);
         uiControlEnable(uiControl(dlg->pollbtn));
@@ -149,13 +221,18 @@ int OnAreaKeyEvent(uiAreaHandler* handler, uiArea* area, uiAreaKeyEvent* evt)
     if (!evt->Up)
     {
         // set key.
-        if (evt->Scancode != 0x1) // ESC
-            dlg->keymap[dlg->pollid] = evt->Scancode;
+        if (evt->Scancode != 0x1 || evt->Modifiers != 0) // ESC
+        {
+            if (evt->Scancode == 0xE && evt->Modifiers == 0) // backspace
+                dlg->keymap[dlg->pollid] = -1;
+            else
+                dlg->keymap[dlg->pollid] = evt->Scancode | (evt->Modifiers << 16);
+        }
 
-        char* keyname = uiKeyName(dlg->keymap[dlg->pollid]);
+        char keyname[64];
+        KeyMappingName(dlg->keymap[dlg->pollid], keyname);
         uiButtonSetText(dlg->pollbtn, keyname);
         uiControlEnable(uiControl(dlg->pollbtn));
-        uiFreeText(keyname);
 
         dlg->pollid = -1;
 
@@ -170,7 +247,7 @@ void FinishJoyMapping(void* param)
     InputDlgData* dlg = (InputDlgData*)param;
     int id = dlg->pollid & 0xFF;
 
-    char keyname[16];
+    char keyname[64];
     JoyMappingName(dlg->joymap[id], keyname);
     uiButtonSetText(dlg->pollbtn, keyname);
     uiControlEnable(uiControl(dlg->pollbtn));
@@ -184,40 +261,94 @@ Uint32 JoyPoll(Uint32 interval, void* param)
 {
     InputDlgData* dlg = (InputDlgData*)param;
 
-    if (dlg->pollid < 0x100) return 0;
-    int id = dlg->pollid & 0xFF;
-    if (id > 12) return 0;
+    if (dlg->pollid < 0x100)
+    {
+        dlg->timer = 0;
+        return 0;
+    }
 
-    SDL_JoystickUpdate();
+    int id = dlg->pollid & 0xFF;
+    if (id > 12)
+    {
+        dlg->timer = 0;
+        return 0;
+    }
 
     SDL_Joystick* joy = Joystick;
-    if (!joy) return 0;
+    if (!joy)
+    {
+        dlg->timer = 0;
+        return 0;
+    }
+    if (!SDL_JoystickGetAttached(joy))
+    {
+        dlg->timer = 0;
+        return 0;
+    }
+
+    int oldmap;
+    if (dlg->joymap[id] == -1) oldmap = 0;
+    else                       oldmap = dlg->joymap[id];
 
     int nbuttons = SDL_JoystickNumButtons(joy);
     for (int i = 0; i < nbuttons; i++)
     {
         if (SDL_JoystickGetButton(joy, i))
         {
-            dlg->joymap[id] = i;
+            dlg->joymap[id] = (oldmap & 0xFFFF0000) | i;
             uiQueueMain(FinishJoyMapping, dlg);
+            dlg->timer = 0;
             return 0;
         }
     }
 
-    u8 blackhat = SDL_JoystickGetHat(joy, 0);
-    if (blackhat)
+    int nhats = SDL_JoystickNumHats(joy);
+    if (nhats > 16) nhats = 16;
+    for (int i = 0; i < nhats; i++)
     {
-        if      (blackhat & 0x1) blackhat = 0x1;
-        else if (blackhat & 0x2) blackhat = 0x2;
-        else if (blackhat & 0x4) blackhat = 0x4;
-        else                     blackhat = 0x8;
+        Uint8 blackhat = SDL_JoystickGetHat(joy, i);
+        if (blackhat)
+        {
+            if      (blackhat & 0x1) blackhat = 0x1;
+            else if (blackhat & 0x2) blackhat = 0x2;
+            else if (blackhat & 0x4) blackhat = 0x4;
+            else                     blackhat = 0x8;
 
-        dlg->joymap[id] = 0x100 | blackhat;
-        uiQueueMain(FinishJoyMapping, dlg);
-        return 0;
+            dlg->joymap[id] = (oldmap & 0xFFFF0000) | 0x100 | blackhat | (i << 4);
+            uiQueueMain(FinishJoyMapping, dlg);
+            dlg->timer = 0;
+            return 0;
+        }
     }
 
-    return 100;
+    int naxes = SDL_JoystickNumAxes(joy);
+    if (naxes > 16) naxes = 16;
+    for (int i = 0; i < naxes; i++)
+    {
+        Sint16 axisval = SDL_JoystickGetAxis(joy, i);
+        int diff = abs(axisval - dlg->axes_rest[i]);
+
+        if (dlg->axes_rest[i] < -16384 && axisval >= 0)
+        {
+            dlg->joymap[id] = (oldmap & 0xFFFF) | 0x10000 | (2 << 20) | (i << 24);
+            uiQueueMain(FinishJoyMapping, dlg);
+            dlg->timer = 0;
+            return 0;
+        }
+        else if (diff > 16384)
+        {
+            int axistype;
+            if (axisval > 0) axistype = 0;
+            else             axistype = 1;
+
+            dlg->joymap[id] = (oldmap & 0xFFFF) | 0x10000 | (axistype << 20) | (i << 24);
+            uiQueueMain(FinishJoyMapping, dlg);
+            dlg->timer = 0;
+            return 0;
+        }
+    }
+
+    return interval;
 }
 
 
@@ -255,15 +386,29 @@ void OnJoyStartConfig(uiButton* btn, void* data)
         return;
     }
 
+    int naxes = SDL_JoystickNumAxes(Joystick);
+    if (naxes > 16) naxes = 16;
+    for (int a = 0; a < naxes; a++)
+    {
+        dlg->axes_rest[a] = SDL_JoystickGetAxis(Joystick, a);
+    }
+
     int id = *(int*)data;
     dlg->pollid = id | 0x100;
     dlg->pollbtn = btn;
 
-    uiButtonSetText(btn, "[press button]");
+    uiButtonSetText(btn, "[press button / axis]");
     uiControlDisable(uiControl(btn));
 
-    SDL_AddTimer(100, JoyPoll, dlg);
+    dlg->timer = SDL_AddTimer(100, JoyPoll, dlg);
     uiControlSetFocus(uiControl(dlg->keypresscatcher));
+}
+
+
+void OnJoystickChanged(uiCombobox* cb, void* data)
+{
+    JoystickID = uiComboboxSelected(cb);
+    OpenJoystick();
 }
 
 
@@ -271,6 +416,11 @@ int OnCloseWindow(uiWindow* window, void* blarg)
 {
     InputDlgData* dlg = (InputDlgData*)(uiControl(window)->UserData);
     openedmask &= ~(1 << dlg->type);
+    if (dlg->timer) SDL_RemoveTimer(dlg->timer);
+
+    JoystickID = Config::JoystickID;
+    OpenJoystick();
+
     return 1;
 }
 
@@ -292,6 +442,10 @@ void OnCancel(uiButton* btn, void* data)
 
     uiControlDestroy(uiControl(dlg->win));
     openedmask &= ~(1 << dlg->type);
+    if (dlg->timer) SDL_RemoveTimer(dlg->timer);
+
+    JoystickID = Config::JoystickID;
+    OpenJoystick();
 }
 
 void OnOk(uiButton* btn, void* data)
@@ -309,10 +463,13 @@ void OnOk(uiButton* btn, void* data)
         memcpy(Config::HKJoyMapping, dlg->joymap, sizeof(int)*HK_MAX);
     }
 
+    Config::JoystickID = JoystickID;
+
     Config::Save();
 
     uiControlDestroy(uiControl(dlg->win));
     openedmask &= ~(1 << dlg->type);
+    if (dlg->timer) SDL_RemoveTimer(dlg->timer);
 }
 
 void Open(int type)
@@ -330,6 +487,7 @@ void Open(int type)
 
     dlg->type = type;
     dlg->pollid = -1;
+    dlg->timer = 0;
 
     if (type == 0)
     {
@@ -376,7 +534,7 @@ void Open(int type)
         uiGrid* b_key = uiNewGrid();
         uiGroupSetChild(g_key, uiControl(b_key));
 
-        const int width = 120;
+        const int width = 240;
 
         for (int i = 0; i < dlg->numkeys; i++)
         {
@@ -386,15 +544,14 @@ void Open(int type)
             uiGridAppend(b_key, uiControl(label), 0, i, 1, 1, 1, uiAlignStart, 1, uiAlignCenter);
             uiControlSetMinSize(uiControl(label), width, 1);
 
-            char* keyname = uiKeyName(dlg->keymap[j]);
+            char keyname[64];
+            KeyMappingName(dlg->keymap[j], keyname);
 
             uiButton* btn = uiNewButton(keyname);
             uiControl(btn)->UserData = dlg;
             uiGridAppend(b_key, uiControl(btn), 1, i, 1, 1, 1, uiAlignFill, 1, uiAlignCenter);
             uiButtonOnClicked(btn, OnKeyStartConfig, (type==0) ? &dskeyorder[i] : &identity[i]);
             uiControlSetMinSize(uiControl(btn), width, 1);
-
-            uiFreeText(keyname);
         }
 
         uiGroup* g_joy = uiNewGroup("Joystick");
@@ -410,7 +567,7 @@ void Open(int type)
             uiGridAppend(b_joy, uiControl(label), 0, i, 1, 1, 1, uiAlignStart, 1, uiAlignCenter);
             uiControlSetMinSize(uiControl(label), width, 1);
 
-            char keyname[16];
+            char keyname[64];
             JoyMappingName(dlg->joymap[j], keyname);
 
             uiButton* btn = uiNewButton(keyname);
@@ -418,6 +575,36 @@ void Open(int type)
             uiGridAppend(b_joy, uiControl(btn), 1, i, 1, 1, 1, uiAlignFill, 1, uiAlignCenter);
             uiButtonOnClicked(btn, OnJoyStartConfig, (type==0) ? &dskeyorder[i] : &identity[i]);
             uiControlSetMinSize(uiControl(btn), width, 1);
+        }
+
+        if (type == 0)
+        {
+            uiLabel* dummy = uiNewLabel(" ");
+            uiGridAppend(b_key, uiControl(dummy), 0, dlg->numkeys, 2, 1, 1, uiAlignFill, 1, uiAlignCenter);
+
+            uiCombobox* joycombo = uiNewCombobox();
+            uiGridAppend(b_joy, uiControl(joycombo), 0, dlg->numkeys, 2, 1, 1, uiAlignFill, 1, uiAlignCenter);
+
+            int numjoys = SDL_NumJoysticks();
+            if (numjoys < 1)
+            {
+                uiComboboxAppend(joycombo, "(no joysticks available)");
+                uiControlDisable(uiControl(joycombo));
+            }
+            else
+            {
+                for (int i = 0; i < numjoys; i++)
+                {
+                    const char* joyname = SDL_JoystickNameForIndex(i);
+                    char fullname[256];
+                    snprintf(fullname, 256, "%d. %s", i+1, joyname);
+
+                    uiComboboxAppend(joycombo, fullname);
+                }
+
+                uiComboboxSetSelected(joycombo, JoystickID);
+                uiComboboxOnSelected(joycombo, OnJoystickChanged, NULL);
+            }
         }
     }
 
@@ -448,6 +635,15 @@ void Open(int type)
     uiControlShow(uiControl(top));
 
     uiControlShow(uiControl(dlg->win));
+}
+
+void Close(int type)
+{
+    if (openedmask & (1<<type))
+        uiControlDestroy(uiControl(inputdlg[type].win));
+
+    openedmask &= ~(1<<type);
+    if (inputdlg[type].timer) SDL_RemoveTimer(inputdlg[type].timer);
 }
 
 }

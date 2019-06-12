@@ -129,9 +129,9 @@ void DeInit()
 
 void Reset()
 {
-    memset(ColorBuffer, 0, 256*192 * 4);
-    memset(DepthBuffer, 0, 256*192 * 4);
-    memset(AttrBuffer, 0, 256*192 * 4);
+    memset(ColorBuffer, 0, BufferSize * 2 * 4);
+    memset(DepthBuffer, 0, BufferSize * 2 * 4);
+    memset(AttrBuffer, 0, BufferSize * 2 * 4);
 
     PrevIsShadowMask = false;
 
@@ -1367,7 +1367,7 @@ void RenderPolygonScanline(RendererPolygon* rp, s32 y)
     // right vertical edges are pushed 1px to the left
     // edges are always filled if antialiasing/edgemarking are enabled or if the pixels are translucent
 
-    if (wireframe || (RenderDispCnt & (1<<5)))
+    if (wireframe || (RenderDispCnt & ((1<<4)|(1<<5))))
     {
         l_filledge = true;
         r_filledge = true;
@@ -1466,6 +1466,8 @@ void RenderPolygonScanline(RendererPolygon* rp, s32 y)
         if (xcov == 0x3FF) xcov = 0;
     }
 
+    if (!l_filledge) x = std::min(xlimit, xend-r_edgelen+1);
+    else
     for (; x < xlimit; x++)
     {
         u32 pixeladdr = FirstPixelOffset + (y*ScanlineWidth) + x;
@@ -1538,8 +1540,6 @@ void RenderPolygonScanline(RendererPolygon* rp, s32 y)
                     AttrBuffer[pixeladdr+BufferSize] = AttrBuffer[pixeladdr];
                 }
             }
-            else if (!l_filledge)
-                continue;
 
             DepthBuffer[pixeladdr] = z;
             ColorBuffer[pixeladdr] = color;
@@ -1561,8 +1561,10 @@ void RenderPolygonScanline(RendererPolygon* rp, s32 y)
     xlimit = xend-r_edgelen+1;
     if (xlimit > xend+1) xlimit = xend+1;
     if (xlimit > 256) xlimit = 256;
+
     if (wireframe && !edge) x = xlimit;
-    else for (; x < xlimit; x++)
+    else
+    for (; x < xlimit; x++)
     {
         u32 pixeladdr = FirstPixelOffset + (y*ScanlineWidth) + x;
         u32 dstattr = AttrBuffer[pixeladdr];
@@ -1636,6 +1638,7 @@ void RenderPolygonScanline(RendererPolygon* rp, s32 y)
         if (xcov == 0x3FF) xcov = 0;
     }
 
+    if (r_filledge)
     for (; x < xlimit; x++)
     {
         u32 pixeladdr = FirstPixelOffset + (y*ScanlineWidth) + x;
@@ -1708,8 +1711,6 @@ void RenderPolygonScanline(RendererPolygon* rp, s32 y)
                     AttrBuffer[pixeladdr+BufferSize] = AttrBuffer[pixeladdr];
                 }
             }
-            else if (!r_filledge)
-                continue;
 
             DepthBuffer[pixeladdr] = z;
             ColorBuffer[pixeladdr] = color;
@@ -2109,17 +2110,14 @@ void RenderThreadFunc()
     }
 }
 
-void RequestLine(int line)
+u32* GetLine(int line)
 {
     if (RenderThreadRunning)
     {
         if (line < 192 && GPU::FrameskipVal == 0)
             Platform::Semaphore_Wait(Sema_ScanlineCount);
     }
-}
 
-u32* GetLine(int line)
-{
     return &ColorBuffer[(line * ScanlineWidth) + FirstPixelOffset];
 }
 

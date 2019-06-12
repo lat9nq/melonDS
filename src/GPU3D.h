@@ -39,6 +39,10 @@ typedef struct
     s32 FinalPosition[2];
     s32 FinalColor[3];
 
+    // hi-res position (4-bit fractional part)
+    // TODO maybe: hi-res color? (that survives clipping)
+    s32 HiresPosition[2];
+
 } Vertex;
 
 typedef struct
@@ -61,6 +65,8 @@ typedef struct
 
     bool IsShadowMask;
     bool IsShadow;
+
+    int Type; // 0=regular 1=line
 
     u32 VTop, VBottom; // vertex indices
     s32 YTop, YBottom; // Y coords
@@ -86,6 +92,8 @@ extern u32 RenderNumPolygons;
 
 extern u64 Timestamp;
 
+extern int Renderer;
+
 bool Init();
 void DeInit();
 void Reset();
@@ -93,6 +101,10 @@ void Reset();
 void DoSavestate(Savestate* file);
 
 void SetEnabled(bool geometry, bool rendering);
+
+int InitRenderer(bool hasGL);
+void DeInitRenderer();
+void UpdateRendererConfig();
 
 void ExecuteCommand();
 
@@ -104,7 +116,6 @@ void CheckFIFODMA();
 void VCount144();
 void VBlank();
 void VCount215();
-void RequestLine(int line);
 u32* GetLine(int line);
 
 void WriteToGXFIFO(u32 val);
@@ -127,8 +138,23 @@ void SetupRenderThread();
 
 void VCount144();
 void RenderFrame();
-void RequestLine(int line);
 u32* GetLine(int line);
+
+}
+
+namespace GLRenderer
+{
+
+bool Init();
+void DeInit();
+void Reset();
+
+void UpdateDisplaySettings();
+
+void RenderFrame();
+void PrepareCaptureFrame();
+u32* GetLine(int line);
+void SetupAccelFrame();
 
 }
 

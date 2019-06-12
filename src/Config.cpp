@@ -28,13 +28,21 @@ namespace Config
 
 const char* kConfigFile = "melonDS.ini";
 
+int _3DRenderer;
 int Threaded3D;
 int Frameskip;
 
+int GL_ScaleFactor;
+int GL_Antialias;
+
 ConfigEntry ConfigFile[] =
 {
+    {"3DRenderer", 0, &_3DRenderer, 1, NULL, 0},
     {"Threaded3D", 0, &Threaded3D, 1, NULL, 0},
     {"Frameskip",  0, &Frameskip,  0, NULL, 0},
+
+    {"GL_ScaleFactor", 0, &GL_ScaleFactor, 1, NULL, 0},
+    {"GL_Antialias", 0, &GL_Antialias, 0, NULL, 0},
 
     {"", -1, NULL, 0, NULL, 0}
 };
@@ -71,12 +79,12 @@ void Load()
     if (!f) return;
 
     char linebuf[1024];
-    char entryname[16];
+    char entryname[32];
     char entryval[1024];
     while (!feof(f))
     {
         fgets(linebuf, 1024, f);
-        int ret = sscanf(linebuf, "%15[A-Za-z_0-9]=%[^\t\n]", entryname, entryval);
+        int ret = sscanf(linebuf, "%32[A-Za-z_0-9]=%[^\t\n]", entryname, entryval);
         if (ret < 2) continue;
 
         ConfigEntry* entry = &ConfigFile[0];
@@ -91,7 +99,7 @@ void Load()
                 c++;
             }
 
-            if (!strncmp(entry->Name, entryname, 15))
+            if (!strncmp(entry->Name, entryname, 32))
             {
                 if (entry->Type == 0)
                     *(int*)entry->Value = strtol(entryval, NULL, 10);

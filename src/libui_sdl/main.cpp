@@ -24,12 +24,16 @@
 #include <SDL2/SDL.h>
 #include "libui/ui.h"
 
+#include "../OpenGLSupport.h"
+#include "main_shaders.h"
+
 #include "../types.h"
 #include "../version.h"
 #include "PlatformConfig.h"
 
 #include "DlgEmuSettings.h"
 #include "DlgInputConfig.h"
+#include "DlgVideoSettings.h"
 #include "DlgAudioSettings.h"
 #include "DlgWifiSettings.h"
 
@@ -41,6 +45,8 @@
 #include "../Config.h"
 
 #include "../Savestate.h"
+
+#include "OSD.h"
 
 
 // savestate slot mapping
@@ -60,6 +66,10 @@ char* EmuDirectory;
 
 uiWindow* MainWindow;
 uiArea* MainDrawArea;
+uiAreaHandler MainDrawAreaHandler;
+
+const u32 kGLVersions[] = {uiGLVersion(3,2), uiGLVersion(3,1), 0};
+uiGLContext* GLContext;
 
 int WindowWidth, WindowHeight;
 
@@ -81,6 +91,10 @@ uiMenuItem* MenuItem_ScreenGap[6];
 uiMenuItem* MenuItem_ScreenLayout[3];
 uiMenuItem* MenuItem_ScreenSizing[4];
 
+uiMenuItem* MenuItem_ScreenFilter;
+uiMenuItem* MenuItem_LimitFPS;
+uiMenuItem* MenuItem_ShowOSD;
+
 SDL_Thread* EmuThread;
 int EmuRunning;
 volatile int EmuStatus;
@@ -92,9 +106,28 @@ char PrevSRAMPath[1024]; // for savestate 'undo load'
 
 bool SavestateLoaded;
 
+bool Screen_UseGL;
+
 bool ScreenDrawInited = false;
-uiDrawBitmap* ScreenBitmap = NULL;
-u32 ScreenBuffer[256*384];
+uiDrawBitmap* ScreenBitmap[2] = {NULL,NULL};
+
+GLuint GL_ScreenShader[3];
+GLuint GL_ScreenShaderAccel[3];
+GLuint GL_ScreenShaderOSD[3];
+struct
+{
+    float uScreenSize[2];
+    u32 u3DScale;
+    u32 uFilterMode;
+
+} GL_ShaderConfig;
+GLuint GL_ShaderConfigUBO;
+GLuint GL_ScreenVertexArrayID, GL_ScreenVertexBufferID;
+float GL_ScreenVertices[2 * 3*2 * 4]; // position/texcoord
+GLuint GL_ScreenTexture;
+bool GL_ScreenSizeDirty;
+
+int GL_3DScale;
 
 int ScreenGap = 0;
 int ScreenLayout = 0;
@@ -111,9 +144,18 @@ uiDrawMatrix BottomScreenTrans;
 
 bool Touching = false;
 
-u32 KeyInputMask;
-u32 HotkeyMask;
+u32 KeyInputMask, JoyInputMask;
+u32 KeyHotkeyMask, JoyHotkeyMask;
+u32 HotkeyMask, LastHotkeyMask;
+u32 HotkeyPress, HotkeyRelease;
+
+#define HotkeyDown(hk)     (HotkeyMask & (1<<(hk)))
+#define HotkeyPressed(hk)  (HotkeyPress & (1<<(hk)))
+#define HotkeyReleased(hk) (HotkeyRelease & (1<<(hk)))
+
 bool LidStatus;
+
+int JoystickID;
 SDL_Joystick* Joystick;
 
 SDL_AudioDeviceID AudioDevice, MicDevice;
@@ -125,17 +167,318 @@ u32 MicBufferReadPos, MicBufferWritePos;
 u32 MicWavLength;
 s16* MicWavBuffer;
 
-u32 MicCommand;
-
-
 void SetupScreenRects(int width, int height);
+
+void TogglePause(void* blarg);
+void Reset(void* blarg);
+
+void SetupSRAMPath();
 
 void SaveState(int slot);
 void LoadState(int slot);
 void UndoStateLoad();
 void GetSavestateName(int slot, char* filename, int len);
 
+void CreateMainWindow(bool opengl);
+void DestroyMainWindow();
+void RecreateMainWindow(bool opengl);
 
+
+
+bool GLScreen_InitShader(GLuint* shader, const char* fs)
+{
+    if (!OpenGL_BuildShaderProgram(kScreenVS, fs, shader, "ScreenShader"))
+        return false;
+
+    glBindAttribLocation(shader[2], 0, "vPosition");
+    glBindAttribLocation(shader[2], 1, "vTexcoord");
+    glBindFragDataLocation(shader[2], 0, "oColor");
+
+    if (!OpenGL_LinkShaderProgram(shader))
+        return false;
+
+    GLuint uni_id;
+
+    uni_id = glGetUniformBlockIndex(shader[2], "uConfig");
+    glUniformBlockBinding(shader[2], uni_id, 16);
+
+    glUseProgram(shader[2]);
+    uni_id = glGetUniformLocation(shader[2], "ScreenTex");
+    glUniform1i(uni_id, 0);
+    uni_id = glGetUniformLocation(shader[2], "_3DTex");
+    glUniform1i(uni_id, 1);
+
+    return true;
+}
+
+bool GLScreen_InitOSDShader(GLuint* shader)
+{
+    if (!OpenGL_BuildShaderProgram(kScreenVS_OSD, kScreenFS_OSD, shader, "ScreenShaderOSD"))
+        return false;
+
+    glBindAttribLocation(shader[2], 0, "vPosition");
+    glBindFragDataLocation(shader[2], 0, "oColor");
+
+    if (!OpenGL_LinkShaderProgram(shader))
+        return false;
+
+    GLuint uni_id;
+
+    uni_id = glGetUniformBlockIndex(shader[2], "uConfig");
+    glUniformBlockBinding(shader[2], uni_id, 16);
+
+    glUseProgram(shader[2]);
+    uni_id = glGetUniformLocation(shader[2], "OSDTex");
+    glUniform1i(uni_id, 0);
+
+    return true;
+}
+
+bool GLScreen_Init()
+{
+    // TODO: consider using epoxy?
+    if (!OpenGL_Init())
+        return false;
+
+    const GLubyte* renderer = glGetString(GL_RENDERER); // get renderer string
+    const GLubyte* version = glGetString(GL_VERSION); // version as a string
+    printf("OpenGL: renderer: %s\n", renderer);
+    printf("OpenGL: version: %s\n", version);
+
+    if (!GLScreen_InitShader(GL_ScreenShader, kScreenFS))
+        return false;
+    if (!GLScreen_InitShader(GL_ScreenShaderAccel, kScreenFS_Accel))
+        return false;
+    if (!GLScreen_InitOSDShader(GL_ScreenShaderOSD))
+        return false;
+
+    memset(&GL_ShaderConfig, 0, sizeof(GL_ShaderConfig));
+
+    glGenBuffers(1, &GL_ShaderConfigUBO);
+    glBindBuffer(GL_UNIFORM_BUFFER, GL_ShaderConfigUBO);
+    glBufferData(GL_UNIFORM_BUFFER, sizeof(GL_ShaderConfig), &GL_ShaderConfig, GL_STATIC_DRAW);
+    glBindBufferBase(GL_UNIFORM_BUFFER, 16, GL_ShaderConfigUBO);
+
+    glGenBuffers(1, &GL_ScreenVertexBufferID);
+    glBindBuffer(GL_ARRAY_BUFFER, GL_ScreenVertexBufferID);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(GL_ScreenVertices), NULL, GL_STATIC_DRAW);
+
+    glGenVertexArrays(1, &GL_ScreenVertexArrayID);
+    glBindVertexArray(GL_ScreenVertexArrayID);
+    glEnableVertexAttribArray(0); // position
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4*4, (void*)(0));
+    glEnableVertexAttribArray(1); // texcoord
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4*4, (void*)(2*4));
+
+    glGenTextures(1, &GL_ScreenTexture);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, GL_ScreenTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8UI, 256*3 + 1, 192*2, 0, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE, NULL);
+
+    GL_ScreenSizeDirty = true;
+
+    return true;
+}
+
+void GLScreen_DeInit()
+{
+    glDeleteTextures(1, &GL_ScreenTexture);
+
+    glDeleteVertexArrays(1, &GL_ScreenVertexArrayID);
+    glDeleteBuffers(1, &GL_ScreenVertexBufferID);
+
+    OpenGL_DeleteShaderProgram(GL_ScreenShader);
+    OpenGL_DeleteShaderProgram(GL_ScreenShaderAccel);
+    OpenGL_DeleteShaderProgram(GL_ScreenShaderOSD);
+}
+
+void GLScreen_DrawScreen()
+{
+    float scale = uiGLGetFramebufferScale(GLContext);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, uiGLGetFramebuffer(GLContext));
+
+    if (GL_ScreenSizeDirty)
+    {
+        GL_ScreenSizeDirty = false;
+
+        GL_ShaderConfig.uScreenSize[0] = WindowWidth;
+        GL_ShaderConfig.uScreenSize[1] = WindowHeight;
+        GL_ShaderConfig.u3DScale = GL_3DScale;
+
+        glBindBuffer(GL_UNIFORM_BUFFER, GL_ShaderConfigUBO);
+        void* unibuf = glMapBuffer(GL_UNIFORM_BUFFER, GL_WRITE_ONLY);
+        if (unibuf) memcpy(unibuf, &GL_ShaderConfig, sizeof(GL_ShaderConfig));
+        glUnmapBuffer(GL_UNIFORM_BUFFER);
+
+        float scwidth, scheight;
+
+        float x0, y0, x1, y1;
+        float s0, s1, s2, s3;
+        float t0, t1, t2, t3;
+
+#define SETVERTEX(i, x, y, s, t) \
+    GL_ScreenVertices[4*(i) + 0] = x; \
+    GL_ScreenVertices[4*(i) + 1] = y; \
+    GL_ScreenVertices[4*(i) + 2] = s; \
+    GL_ScreenVertices[4*(i) + 3] = t;
+
+        x0 = TopScreenRect.X;
+        y0 = TopScreenRect.Y;
+        x1 = TopScreenRect.X + TopScreenRect.Width;
+        y1 = TopScreenRect.Y + TopScreenRect.Height;
+
+        scwidth = 256;
+        scheight = 192;
+
+        switch (ScreenRotation)
+        {
+        case 0:
+            s0 = 0; t0 = 0;
+            s1 = scwidth; t1 = 0;
+            s2 = 0; t2 = scheight;
+            s3 = scwidth; t3 = scheight;
+            break;
+
+        case 1:
+            s0 = 0; t0 = scheight;
+            s1 = 0; t1 = 0;
+            s2 = scwidth; t2 = scheight;
+            s3 = scwidth; t3 = 0;
+            break;
+
+        case 2:
+            s0 = scwidth; t0 = scheight;
+            s1 = 0; t1 = scheight;
+            s2 = scwidth; t2 = 0;
+            s3 = 0; t3 = 0;
+            break;
+
+        case 3:
+            s0 = scwidth; t0 = 0;
+            s1 = scwidth; t1 = scheight;
+            s2 = 0; t2 = 0;
+            s3 = 0; t3 = scheight;
+            break;
+        }
+
+        SETVERTEX(0, x0, y0, s0, t0);
+        SETVERTEX(1, x1, y1, s3, t3);
+        SETVERTEX(2, x1, y0, s1, t1);
+        SETVERTEX(3, x0, y0, s0, t0);
+        SETVERTEX(4, x0, y1, s2, t2);
+        SETVERTEX(5, x1, y1, s3, t3);
+
+        x0 = BottomScreenRect.X;
+        y0 = BottomScreenRect.Y;
+        x1 = BottomScreenRect.X + BottomScreenRect.Width;
+        y1 = BottomScreenRect.Y + BottomScreenRect.Height;
+
+        scwidth = 256;
+        scheight = 192;
+
+        switch (ScreenRotation)
+        {
+        case 0:
+            s0 = 0; t0 = 192;
+            s1 = scwidth; t1 = 192;
+            s2 = 0; t2 = 192+scheight;
+            s3 = scwidth; t3 = 192+scheight;
+            break;
+
+        case 1:
+            s0 = 0; t0 = 192+scheight;
+            s1 = 0; t1 = 192;
+            s2 = scwidth; t2 = 192+scheight;
+            s3 = scwidth; t3 = 192;
+            break;
+
+        case 2:
+            s0 = scwidth; t0 = 192+scheight;
+            s1 = 0; t1 = 192+scheight;
+            s2 = scwidth; t2 = 192;
+            s3 = 0; t3 = 192;
+            break;
+
+        case 3:
+            s0 = scwidth; t0 = 192;
+            s1 = scwidth; t1 = 192+scheight;
+            s2 = 0; t2 = 192;
+            s3 = 0; t3 = 192+scheight;
+            break;
+        }
+
+        SETVERTEX(6, x0, y0, s0, t0);
+        SETVERTEX(7, x1, y1, s3, t3);
+        SETVERTEX(8, x1, y0, s1, t1);
+        SETVERTEX(9, x0, y0, s0, t0);
+        SETVERTEX(10, x0, y1, s2, t2);
+        SETVERTEX(11, x1, y1, s3, t3);
+
+#undef SETVERTEX
+
+        glBindBuffer(GL_ARRAY_BUFFER, GL_ScreenVertexBufferID);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(GL_ScreenVertices), GL_ScreenVertices);
+    }
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_BLEND);
+    glColorMaski(0, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+
+    glViewport(0, 0, WindowWidth*scale, WindowHeight*scale);
+
+    if (GPU3D::Renderer == 0)
+        OpenGL_UseShaderProgram(GL_ScreenShader);
+    else
+        OpenGL_UseShaderProgram(GL_ScreenShaderAccel);
+
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    if (RunningSomething)
+    {
+        int frontbuf = GPU::FrontBuffer;
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, GL_ScreenTexture);
+
+        if (GPU::Framebuffer[frontbuf][0] && GPU::Framebuffer[frontbuf][1])
+        {
+            if (GPU3D::Renderer == 0)
+            {
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, 192, GL_RGBA_INTEGER,
+                                GL_UNSIGNED_BYTE, GPU::Framebuffer[frontbuf][0]);
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 192, 256, 192, GL_RGBA_INTEGER,
+                                GL_UNSIGNED_BYTE, GPU::Framebuffer[frontbuf][1]);
+            }
+            else
+            {
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256*3 + 1, 192, GL_RGBA_INTEGER,
+                                GL_UNSIGNED_BYTE, GPU::Framebuffer[frontbuf][0]);
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 192, 256*3 + 1, 192, GL_RGBA_INTEGER,
+                                GL_UNSIGNED_BYTE, GPU::Framebuffer[frontbuf][1]);
+            }
+        }
+
+        glActiveTexture(GL_TEXTURE1);
+        if (GPU3D::Renderer != 0)
+            GPU3D::GLRenderer::SetupAccelFrame();
+
+        glBindBuffer(GL_ARRAY_BUFFER, GL_ScreenVertexBufferID);
+        glBindVertexArray(GL_ScreenVertexArrayID);
+        glDrawArrays(GL_TRIANGLES, 0, 4*3);
+    }
+
+    OpenGL_UseShaderProgram(GL_ScreenShaderOSD);
+    OSD::Update(true, NULL);
+
+    glFlush();
+    uiGLSwapBuffers(GLContext);
+}
 
 void MicLoadWav(char* name)
 {
@@ -215,12 +558,6 @@ void MicLoadWav(char* name)
     SDL_FreeWAV(buf);
 }
 
-
-void UpdateWindowTitle(void* data)
-{
-    uiWindowSetTitle(MainWindow, (const char*)data);
-}
-
 void AudioCallback(void* data, Uint8* stream, int len)
 {
     // resampling:
@@ -287,50 +624,12 @@ void MicCallback(void* data, Uint8* stream, int len)
     }
 }
 
-bool JoyButtonPressed(int btnid, int njoybuttons, Uint8* joybuttons, Uint32 hat)
-{
-    if (btnid < 0) return false;
-
-    hat &= ~(hat >> 4);
-
-    bool pressed = false;
-    if (btnid == 0x101) // up
-        pressed = (hat & SDL_HAT_UP);
-    else if (btnid == 0x104) // down
-        pressed = (hat & SDL_HAT_DOWN);
-    else if (btnid == 0x102) // right
-        pressed = (hat & SDL_HAT_RIGHT);
-    else if (btnid == 0x108) // left
-        pressed = (hat & SDL_HAT_LEFT);
-    else if (btnid < njoybuttons)
-        pressed = (joybuttons[btnid] & ~(joybuttons[btnid] >> 1)) & 0x01;
-
-    return pressed;
-}
-
-bool JoyButtonHeld(int btnid, int njoybuttons, Uint8* joybuttons, Uint32 hat)
-{
-    if (btnid < 0) return false;
-
-    bool pressed = false;
-    if (btnid == 0x101) // up
-        pressed = (hat & SDL_HAT_UP);
-    else if (btnid == 0x104) // down
-        pressed = (hat & SDL_HAT_DOWN);
-    else if (btnid == 0x102) // right
-        pressed = (hat & SDL_HAT_RIGHT);
-    else if (btnid == 0x108) // left
-        pressed = (hat & SDL_HAT_LEFT);
-    else if (btnid < njoybuttons)
-        pressed = joybuttons[btnid] & 0x01;
-
-    return pressed;
-}
-
 void FeedMicInput()
 {
     int type = Config::MicInputType;
-    if ((type != 1 && MicCommand == 0) ||
+    bool cmd = HotkeyDown(HK_Mic);
+
+    if ((type != 1 && !cmd) ||
         (type == 1 && MicBufferLength == 0) ||
         (type == 3 && MicWavBuffer == NULL))
     {
@@ -390,6 +689,158 @@ void FeedMicInput()
     }
 }
 
+void OpenJoystick()
+{
+    if (Joystick) SDL_JoystickClose(Joystick);
+
+    int num = SDL_NumJoysticks();
+    if (num < 1)
+    {
+        Joystick = NULL;
+        return;
+    }
+
+    if (JoystickID >= num)
+        JoystickID = 0;
+
+    Joystick = SDL_JoystickOpen(JoystickID);
+}
+
+bool JoystickButtonDown(int val)
+{
+    if (val == -1) return false;
+
+    if (val & 0x100)
+    {
+        int hatnum = (val >> 4) & 0xF;
+        int hatdir = val & 0xF;
+        Uint8 hatval = SDL_JoystickGetHat(Joystick, hatnum);
+
+        bool pressed = false;
+        if      (hatdir == 0x1) pressed = (hatval & SDL_HAT_UP);
+        else if (hatdir == 0x4) pressed = (hatval & SDL_HAT_DOWN);
+        else if (hatdir == 0x2) pressed = (hatval & SDL_HAT_RIGHT);
+        else if (hatdir == 0x8) pressed = (hatval & SDL_HAT_LEFT);
+
+        if (pressed) return true;
+    }
+    else
+    {
+        int btnnum = val & 0xFFFF;
+        Uint8 btnval = SDL_JoystickGetButton(Joystick, btnnum);
+
+        if (btnval) return true;
+    }
+
+    if (val & 0x10000)
+    {
+        int axisnum = (val >> 24) & 0xF;
+        int axisdir = (val >> 20) & 0xF;
+        Sint16 axisval = SDL_JoystickGetAxis(Joystick, axisnum);
+
+        switch (axisdir)
+        {
+        case 0: // positive
+            if (axisval > 16384) return true;
+            break;
+
+        case 1: // negative
+            if (axisval < -16384) return true;
+            break;
+
+        case 2: // trigger
+            if (axisval > 0) return true;
+            break;
+        }
+    }
+
+    return false;
+}
+
+void ProcessInput()
+{
+    SDL_JoystickUpdate();
+
+    if (Joystick)
+    {
+        if (!SDL_JoystickGetAttached(Joystick))
+        {
+            SDL_JoystickClose(Joystick);
+            Joystick = NULL;
+        }
+    }
+    if (!Joystick && (SDL_NumJoysticks() > 0))
+    {
+        JoystickID = Config::JoystickID;
+        OpenJoystick();
+    }
+
+    JoyInputMask = 0xFFF;
+    for (int i = 0; i < 12; i++)
+        if (JoystickButtonDown(Config::JoyMapping[i]))
+            JoyInputMask &= ~(1<<i);
+
+    JoyHotkeyMask = 0;
+    for (int i = 0; i < HK_MAX; i++)
+        if (JoystickButtonDown(Config::HKJoyMapping[i]))
+            JoyHotkeyMask |= (1<<i);
+
+    HotkeyMask = KeyHotkeyMask | JoyHotkeyMask;
+    HotkeyPress = HotkeyMask & ~LastHotkeyMask;
+    HotkeyRelease = LastHotkeyMask & ~HotkeyMask;
+    LastHotkeyMask = HotkeyMask;
+}
+
+bool JoyButtonPressed(int btnid, int njoybuttons, Uint8* joybuttons, Uint32 hat)
+{
+    if (btnid < 0) return false;
+
+    hat &= ~(hat >> 4);
+
+    bool pressed = false;
+    if (btnid == 0x101) // up
+        pressed = (hat & SDL_HAT_UP);
+    else if (btnid == 0x104) // down
+        pressed = (hat & SDL_HAT_DOWN);
+    else if (btnid == 0x102) // right
+        pressed = (hat & SDL_HAT_RIGHT);
+    else if (btnid == 0x108) // left
+        pressed = (hat & SDL_HAT_LEFT);
+    else if (btnid < njoybuttons)
+        pressed = (joybuttons[btnid] & ~(joybuttons[btnid] >> 1)) & 0x01;
+
+    return pressed;
+}
+
+bool JoyButtonHeld(int btnid, int njoybuttons, Uint8* joybuttons, Uint32 hat)
+{
+    if (btnid < 0) return false;
+
+    bool pressed = false;
+    if (btnid == 0x101) // up
+        pressed = (hat & SDL_HAT_UP);
+    else if (btnid == 0x104) // down
+        pressed = (hat & SDL_HAT_DOWN);
+    else if (btnid == 0x102) // right
+        pressed = (hat & SDL_HAT_RIGHT);
+    else if (btnid == 0x108) // left
+        pressed = (hat & SDL_HAT_LEFT);
+    else if (btnid < njoybuttons)
+        pressed = joybuttons[btnid] & 0x01;
+
+    return pressed;
+}
+
+void UpdateWindowTitle(void* data)
+{
+    uiWindowSetTitle(MainWindow, (const char*)data);
+}
+
+void UpdateFPSLimit(void* data)
+{
+    uiMenuItemSetChecked(MenuItem_LimitFPS, Config::LimitFPS==1);
+}
+
 int EmuThreadFunc(void* burp)
 {
     NDS::Init();
@@ -399,25 +850,25 @@ int EmuThreadFunc(void* burp)
     MainScreenPos[2] = 0;
     AutoScreenSizing = 0;
 
-    ScreenDrawInited = false;
+    if (Screen_UseGL)
+    {
+        uiGLMakeContextCurrent(GLContext);
+        GPU3D::InitRenderer(true);
+        uiGLMakeContextCurrent(NULL);
+    }
+    else
+    {
+        GPU3D::InitRenderer(false);
+    }
+
     Touching = false;
     KeyInputMask = 0xFFF;
+    JoyInputMask = 0xFFF;
+    KeyHotkeyMask = 0;
+    JoyHotkeyMask = 0;
     HotkeyMask = 0;
+    LastHotkeyMask = 0;
     LidStatus = false;
-    MicCommand = 0;
-
-    Uint8* joybuttons = NULL; int njoybuttons = 0;
-    Uint32 joyhat = 0;
-
-    if (Joystick)
-    {
-        njoybuttons = SDL_JoystickNumButtons(Joystick);
-        if (njoybuttons)
-        {
-            joybuttons = new Uint8[njoybuttons];
-            memset(joybuttons, 0, sizeof(Uint8)*njoybuttons);
-        }
-    }
 
     u32 nframes = 0;
     u32 starttick = SDL_GetTicks();
@@ -428,95 +879,39 @@ int EmuThreadFunc(void* burp)
 
     while (EmuRunning != 0)
     {
+        ProcessInput();
+
+        if (HotkeyPressed(HK_FastForwardToggle))
+        {
+            Config::LimitFPS = !Config::LimitFPS;
+            uiQueueMain(UpdateFPSLimit, NULL);
+        }
+
+        if (HotkeyPressed(HK_Pause)) uiQueueMain(TogglePause, NULL);
+        if (HotkeyPressed(HK_Reset)) uiQueueMain(Reset, NULL);
+
         if (EmuRunning == 1)
         {
             EmuStatus = 1;
 
-            SDL_JoystickUpdate();
+            // process input and hotkeys
+            NDS::SetKeyMask(KeyInputMask & JoyInputMask);
 
-            if (Joystick)
+            if (HotkeyPressed(HK_Lid))
             {
-                if (!SDL_JoystickGetAttached(Joystick))
-                {
-                    SDL_JoystickClose(Joystick);
-                    Joystick = NULL;
-                }
-            }
-            if (!Joystick && (SDL_NumJoysticks() > 0))
-            {
-                Joystick = SDL_JoystickOpen(0);
-                if (Joystick)
-                {
-                    njoybuttons = SDL_JoystickNumButtons(Joystick);
-                    if (joybuttons) delete[] joybuttons;
-                    if (njoybuttons)
-                    {
-                        joybuttons = new Uint8[njoybuttons];
-                        memset(joybuttons, 0, sizeof(Uint8)*njoybuttons);
-                        joyhat = 0;
-                    }
-                }
-            }
-
-            // poll input
-            u32 keymask = KeyInputMask;
-            u32 joymask = 0xFFF;
-            if (Joystick)
-            {
-                joyhat <<= 4;
-                joyhat |= SDL_JoystickGetHat(Joystick, 0);
-
-                Sint16 axisX = SDL_JoystickGetAxis(Joystick, 0);
-                Sint16 axisY = SDL_JoystickGetAxis(Joystick, 1);
-
-                for (int i = 0; i < njoybuttons; i++)
-                {
-                    joybuttons[i] <<= 1;
-                    joybuttons[i] |= SDL_JoystickGetButton(Joystick, i);
-                }
-
-                for (int i = 0; i < 12; i++)
-                {
-                    bool pressed = JoyButtonHeld(Config::JoyMapping[i], njoybuttons, joybuttons, joyhat);
-
-                    if (i == 4) // right
-                        pressed = pressed || (axisX >= 16384);
-                    else if (i == 5) // left
-                        pressed = pressed || (axisX <= -16384);
-                    else if (i == 6) // up
-                        pressed = pressed || (axisY <= -16384);
-                    else if (i == 7) // down
-                        pressed = pressed || (axisY >= 16384);
-
-                    if (pressed) joymask &= ~(1<<i);
-                }
-
-                if (JoyButtonPressed(Config::HKJoyMapping[HK_Lid], njoybuttons, joybuttons, joyhat))
-                {
-                    LidStatus = !LidStatus;
-                    HotkeyMask |= 0x1;
-                }
-
-                if (JoyButtonHeld(Config::HKJoyMapping[HK_Mic], njoybuttons, joybuttons, joyhat))
-                    MicCommand |= 2;
-                else
-                    MicCommand &= ~2;
-            }
-            NDS::SetKeyMask(keymask & joymask);
-
-            if (HotkeyMask & 0x1)
-            {
+                LidStatus = !LidStatus;
                 NDS::SetLidClosed(LidStatus);
-                HotkeyMask &= ~0x1;
+                OSD::AddMessage(0, LidStatus ? "Lid closed" : "Lid opened");
             }
 
             // microphone input
             FeedMicInput();
 
-            // emulate
-            u32 nlines = NDS::RunFrame();
-
-            if (EmuRunning == 0) break;
+            if (Screen_UseGL)
+            {
+                uiGLBegin(GLContext);
+                uiGLMakeContextCurrent(GLContext);
+            }
 
             // auto screen layout
             {
@@ -547,21 +942,30 @@ int EmuThreadFunc(void* burp)
                 }
             }
 
-            memcpy(ScreenBuffer, GPU::Framebuffer, 256*384*4);
+            // emulate
+            u32 nlines = NDS::RunFrame();
+
+            if (EmuRunning == 0) break;
+
+            if (Screen_UseGL)
+            {
+                GLScreen_DrawScreen();
+                uiGLEnd(GLContext);
+            }
             uiAreaQueueRedrawAll(MainDrawArea);
 
             // framerate limiter based off SDL2_gfx
-            float framerate;
-            if (nlines == 263) framerate = 1000.0f / 60.0f;
-            else               framerate = ((1000.0f * nlines) / 263.0f) / 60.0f;
+            float framerate = (1000.0f * nlines) / (60.0f * 263.0f);
 
             fpslimitcount++;
             u32 curtick = SDL_GetTicks();
             u32 delay = curtick - lasttick;
             lasttick = curtick;
 
+            bool limitfps = Config::LimitFPS && !HotkeyDown(HK_FastForward);
+
             u32 wantedtick = starttick + (u32)((float)fpslimitcount * framerate);
-            if (curtick < wantedtick && Config::LimitFPS)
+            if (curtick < wantedtick && limitfps)
             {
                 SDL_Delay(wantedtick - curtick);
             }
@@ -578,7 +982,9 @@ int EmuThreadFunc(void* burp)
                 u32 diff = tick - lastmeasuretick;
                 lastmeasuretick = tick;
 
-                u32 fps = (nframes * 1000) / diff;
+                u32 fps;
+                if (diff < 1) fps = 77777;
+                else fps = (nframes * 1000) / diff;
                 nframes = 0;
 
                 float fpstarget;
@@ -600,8 +1006,17 @@ int EmuThreadFunc(void* burp)
 
             if (EmuRunning == 2)
             {
+                if (Screen_UseGL)
+                {
+                    uiGLBegin(GLContext);
+                    uiGLMakeContextCurrent(GLContext);
+                    GLScreen_DrawScreen();
+                    uiGLEnd(GLContext);
+                }
                 uiAreaQueueRedrawAll(MainDrawArea);
             }
+
+            if (Screen_UseGL) uiGLMakeContextCurrent(NULL);
 
             EmuStatus = EmuRunning;
 
@@ -611,10 +1026,20 @@ int EmuThreadFunc(void* burp)
 
     EmuStatus = 0;
 
-    if (joybuttons) delete[] joybuttons;
+    if (Screen_UseGL) uiGLMakeContextCurrent(GLContext);
 
     NDS::DeInit();
     Platform::LAN_DeInit();
+
+    if (Screen_UseGL)
+    {
+        OSD::DeInit(true);
+        GLScreen_DeInit();
+    }
+    else
+        OSD::DeInit(false);
+
+    if (Screen_UseGL) uiGLMakeContextCurrent(NULL);
 
     return 44203;
 }
@@ -624,26 +1049,35 @@ void OnAreaDraw(uiAreaHandler* handler, uiArea* area, uiAreaDrawParams* params)
 {
     if (!ScreenDrawInited)
     {
-        ScreenBitmap = uiDrawNewBitmap(params->Context, 256, 384);
+        if (ScreenBitmap[0]) uiDrawFreeBitmap(ScreenBitmap[0]);
+        if (ScreenBitmap[1]) uiDrawFreeBitmap(ScreenBitmap[1]);
+
         ScreenDrawInited = true;
+        ScreenBitmap[0] = uiDrawNewBitmap(params->Context, 256, 192, 0);
+        ScreenBitmap[1] = uiDrawNewBitmap(params->Context, 256, 192, 0);
     }
 
-    if (!ScreenBitmap) return;
+    int frontbuf = GPU::FrontBuffer;
+    if (!ScreenBitmap[0] || !ScreenBitmap[1]) return;
+    if (!GPU::Framebuffer[frontbuf][0] || !GPU::Framebuffer[frontbuf][1]) return;
 
     uiRect top = {0, 0, 256, 192};
-    uiRect bot = {0, 192, 256, 192};
+    uiRect bot = {0, 0, 256, 192};
 
-    uiDrawBitmapUpdate(ScreenBitmap, ScreenBuffer);
+    uiDrawBitmapUpdate(ScreenBitmap[0], GPU::Framebuffer[frontbuf][0]);
+    uiDrawBitmapUpdate(ScreenBitmap[1], GPU::Framebuffer[frontbuf][1]);
 
     uiDrawSave(params->Context);
     uiDrawTransform(params->Context, &TopScreenTrans);
-    uiDrawBitmapDraw(params->Context, ScreenBitmap, &top, &TopScreenRect, Config::ScreenFilter==1);
+    uiDrawBitmapDraw(params->Context, ScreenBitmap[0], &top, &TopScreenRect, Config::ScreenFilter==1);
     uiDrawRestore(params->Context);
 
     uiDrawSave(params->Context);
     uiDrawTransform(params->Context, &BottomScreenTrans);
-    uiDrawBitmapDraw(params->Context, ScreenBitmap, &bot, &BottomScreenRect, Config::ScreenFilter==1);
+    uiDrawBitmapDraw(params->Context, ScreenBitmap[1], &bot, &BottomScreenRect, Config::ScreenFilter==1);
     uiDrawRestore(params->Context);
+
+    OSD::Update(false, params);
 }
 
 void OnAreaMouseEvent(uiAreaHandler* handler, uiArea* area, uiAreaMouseEvent* evt)
@@ -723,6 +1157,15 @@ void OnAreaDragBroken(uiAreaHandler* handler, uiArea* area)
 {
 }
 
+bool EventMatchesKey(uiAreaKeyEvent* evt, int val)
+{
+    if (val == -1) return false;
+
+    int key = val & 0xFFFF;
+    int mod = val >> 16;
+    return evt->Scancode == key && evt->Modifiers == mod;
+}
+
 int OnAreaKeyEvent(uiAreaHandler* handler, uiArea* area, uiAreaKeyEvent* evt)
 {
     // TODO: release all keys if the window loses focus? or somehow global key input?
@@ -731,21 +1174,19 @@ int OnAreaKeyEvent(uiAreaHandler* handler, uiArea* area, uiAreaKeyEvent* evt)
     if (evt->Modifiers == 0x2) // ALT+key
         return 0;
 
-    // d0rp
-    if (!RunningSomething)
-        return 1;
-
     if (evt->Up)
     {
         for (int i = 0; i < 12; i++)
-            if (evt->Scancode == Config::KeyMapping[i])
+            if (EventMatchesKey(evt, Config::KeyMapping[i]))
                 KeyInputMask |= (1<<i);
 
-        if (evt->Scancode == Config::HKKeyMapping[HK_Mic])
-            MicCommand &= ~1;
+        for (int i = 0; i < HK_MAX; i++)
+            if (EventMatchesKey(evt, Config::HKKeyMapping[i]))
+                KeyHotkeyMask &= ~(1<<i);
     }
     else if (!evt->Repeat)
     {
+        // TODO, eventually: make savestate keys configurable?
         // F keys: 3B-44, 57-58 | SHIFT: mod. 0x4
         if (evt->Scancode >= 0x3B && evt->Scancode <= 0x42) // F1-F8, quick savestate
         {
@@ -763,17 +1204,14 @@ int OnAreaKeyEvent(uiAreaHandler* handler, uiArea* area, uiAreaKeyEvent* evt)
         }
 
         for (int i = 0; i < 12; i++)
-            if (evt->Scancode == Config::KeyMapping[i])
+            if (EventMatchesKey(evt, Config::KeyMapping[i]))
                 KeyInputMask &= ~(1<<i);
 
-        if (evt->Scancode == Config::HKKeyMapping[HK_Lid])
-        {
-            LidStatus = !LidStatus;
-            HotkeyMask |= 0x1;
-        }
-        if (evt->Scancode == Config::HKKeyMapping[HK_Mic])
-            MicCommand |= 1;
+        for (int i = 0; i < HK_MAX; i++)
+            if (EventMatchesKey(evt, Config::HKKeyMapping[i]))
+                KeyHotkeyMask |= (1<<i);
 
+        // REMOVE ME
         if (evt->Scancode == 0x57) // F11
             NDS::debug(0);
     }
@@ -802,7 +1240,7 @@ void SetupScreenRects(int width, int height)
     else
         sizemode = ScreenSizing;
 
-    int screenW, screenH;
+    int screenW, screenH, gap;
     if (sideways)
     {
         screenW = 192;
@@ -813,6 +1251,8 @@ void SetupScreenRects(int width, int height)
         screenW = 256;
         screenH = 192;
     }
+
+    gap = ScreenGap;
 
     uiRect *topscreen, *bottomscreen;
     if (ScreenRotation == 1 || ScreenRotation == 2)
@@ -833,7 +1273,7 @@ void SetupScreenRects(int width, int height)
         int heightreq;
         int startX = 0;
 
-        width -= ScreenGap;
+        width -= gap;
 
         if (sizemode == 0) // even
         {
@@ -871,7 +1311,7 @@ void SetupScreenRects(int width, int height)
         topscreen->X = startX;
         topscreen->Y = ((height - heightreq) / 2) + (heightreq - topscreen->Height);
 
-        bottomscreen->X = topscreen->X + topscreen->Width + ScreenGap;
+        bottomscreen->X = topscreen->X + topscreen->Width + gap;
 
         if (sizemode == 1)
         {
@@ -892,7 +1332,7 @@ void SetupScreenRects(int width, int height)
         int widthreq;
         int startY = 0;
 
-        height -= ScreenGap;
+        height -= gap;
 
         if (sizemode == 0) // even
         {
@@ -930,7 +1370,7 @@ void SetupScreenRects(int width, int height)
         topscreen->Y = startY;
         topscreen->X = (width - topscreen->Width) / 2;
 
-        bottomscreen->Y = topscreen->Y + topscreen->Height + ScreenGap;
+        bottomscreen->Y = topscreen->Y + topscreen->Height + gap;
 
         if (sizemode == 1)
         {
@@ -1000,6 +1440,8 @@ void SetupScreenRects(int width, int height)
         }
         break;
     }
+
+    GL_ScreenSizeDirty = true;
 }
 
 void SetMinSize(int w, int h)
@@ -1027,15 +1469,17 @@ void OnAreaResize(uiAreaHandler* handler, uiArea* area, int width, int height)
     WindowWidth = width;
     WindowHeight = height;
 
-    int max = uiWindowMaximized(MainWindow);
-    int min = uiWindowMinimized(MainWindow);
+    int ismax = uiWindowMaximized(MainWindow);
+    int ismin = uiWindowMinimized(MainWindow);
 
-    Config::WindowMaximized = max;
-    if (!max && !min)
+    Config::WindowMaximized = ismax;
+    if (!ismax && !ismin)
     {
         Config::WindowWidth = width;
         Config::WindowHeight = height;
     }
+
+    OSD::WindowResized(Screen_UseGL);
 }
 
 
@@ -1072,6 +1516,57 @@ void Run()
     uiMenuItemSetChecked(MenuItem_Pause, 0);
 }
 
+void TogglePause(void* blarg)
+{
+    if (!RunningSomething) return;
+
+    if (EmuRunning == 1)
+    {
+        // enable pause
+        EmuRunning = 2;
+        uiMenuItemSetChecked(MenuItem_Pause, 1);
+
+        SDL_PauseAudioDevice(AudioDevice, 1);
+        SDL_PauseAudioDevice(MicDevice, 1);
+
+        OSD::AddMessage(0, "Paused");
+    }
+    else
+    {
+        // disable pause
+        EmuRunning = 1;
+        uiMenuItemSetChecked(MenuItem_Pause, 0);
+
+        SDL_PauseAudioDevice(AudioDevice, 0);
+        SDL_PauseAudioDevice(MicDevice, 0);
+
+        OSD::AddMessage(0, "Resumed");
+    }
+}
+
+void Reset(void* blarg)
+{
+    if (!RunningSomething) return;
+
+    EmuRunning = 2;
+    while (EmuStatus != 2);
+
+    SavestateLoaded = false;
+    uiMenuItemDisable(MenuItem_UndoStateLoad);
+
+    if (ROMPath[0] == '\0')
+        NDS::LoadBIOS();
+    else
+    {
+        SetupSRAMPath();
+        NDS::LoadROM(ROMPath, SRAMPath, Config::DirectBoot);
+    }
+
+    Run();
+
+    OSD::AddMessage(0, "Reset");
+}
+
 void Stop(bool internal)
 {
     EmuRunning = 2;
@@ -1090,11 +1585,12 @@ void Stop(bool internal)
     uiMenuItemDisable(MenuItem_Stop);
     uiMenuItemSetChecked(MenuItem_Pause, 0);
 
-    memset(ScreenBuffer, 0, 256*384*4);
     uiAreaQueueRedrawAll(MainDrawArea);
 
     SDL_PauseAudioDevice(AudioDevice, 1);
     SDL_PauseAudioDevice(MicDevice, 1);
+
+    OSD::AddMessage(0xFFC040, "Shutdown");
 }
 
 void SetupSRAMPath()
@@ -1194,6 +1690,11 @@ void LoadState(int slot)
 
     if (!Platform::FileExists(filename))
     {
+        char msg[64];
+        if (slot > 0) sprintf(msg, "State slot %d is empty", slot);
+        else          sprintf(msg, "State file does not exist");
+        OSD::AddMessage(0xFFA0A0, msg);
+
         EmuRunning = prevstatus;
         return;
     }
@@ -1233,6 +1734,11 @@ void LoadState(int slot)
 
             NDS::RelocateSave(SRAMPath, false);
         }
+
+        char msg[64];
+        if (slot > 0) sprintf(msg, "State loaded from slot %d", slot);
+        else          sprintf(msg, "State loaded from file");
+        OSD::AddMessage(0, msg);
 
         SavestateLoaded = true;
         uiMenuItemEnable(MenuItem_UndoStateLoad);
@@ -1293,6 +1799,11 @@ void SaveState(int slot)
         }
     }
 
+    char msg[64];
+    if (slot > 0) sprintf(msg, "State saved to slot %d", slot);
+    else          sprintf(msg, "State saved to file");
+    OSD::AddMessage(0, msg);
+
     EmuRunning = prevstatus;
 }
 
@@ -1317,7 +1828,20 @@ void UndoStateLoad()
         NDS::RelocateSave(SRAMPath, false);
     }
 
+    OSD::AddMessage(0, "State load undone");
+
     EmuRunning = prevstatus;
+}
+
+
+void CloseAllDialogs()
+{
+    DlgAudioSettings::Close();
+    DlgEmuSettings::Close();
+    DlgInputConfig::Close(0);
+    DlgInputConfig::Close(1);
+    DlgVideoSettings::Close();
+    DlgWifiSettings::Close();
 }
 
 
@@ -1326,6 +1850,7 @@ int OnCloseWindow(uiWindow* window, void* blarg)
     EmuRunning = 3;
     while (EmuStatus != 3);
 
+    CloseAllDialogs();
     uiQuit();
     return 1;
 }
@@ -1362,7 +1887,8 @@ void OnCloseByMenu(uiMenuItem* item, uiWindow* window, void* blarg)
     EmuRunning = 3;
     while (EmuStatus != 3);
 
-    uiControlDestroy(uiControl(window));
+    CloseAllDialogs();
+    DestroyMainWindow();
     uiQuit();
 }
 
@@ -1418,47 +1944,12 @@ void OnRun(uiMenuItem* item, uiWindow* window, void* blarg)
 
 void OnPause(uiMenuItem* item, uiWindow* window, void* blarg)
 {
-    if (!RunningSomething) return;
-
-    if (EmuRunning == 1)
-    {
-        // enable pause
-        EmuRunning = 2;
-        uiMenuItemSetChecked(MenuItem_Pause, 1);
-
-        SDL_PauseAudioDevice(AudioDevice, 1);
-        SDL_PauseAudioDevice(MicDevice, 1);
-    }
-    else
-    {
-        // disable pause
-        EmuRunning = 1;
-        uiMenuItemSetChecked(MenuItem_Pause, 0);
-
-        SDL_PauseAudioDevice(AudioDevice, 0);
-        SDL_PauseAudioDevice(MicDevice, 0);
-    }
+    TogglePause(NULL);
 }
 
 void OnReset(uiMenuItem* item, uiWindow* window, void* blarg)
 {
-    if (!RunningSomething) return;
-
-    EmuRunning = 2;
-    while (EmuStatus != 2);
-
-    SavestateLoaded = false;
-    uiMenuItemDisable(MenuItem_UndoStateLoad);
-
-    if (ROMPath[0] == '\0')
-        NDS::LoadBIOS();
-    else
-    {
-        SetupSRAMPath();
-        NDS::LoadROM(ROMPath, SRAMPath, Config::DirectBoot);
-    }
-
-    Run();
+    Reset(NULL);
 }
 
 void OnStop(uiMenuItem* item, uiWindow* window, void* blarg)
@@ -1483,6 +1974,11 @@ void OnOpenHotkeyConfig(uiMenuItem* item, uiWindow* window, void* blarg)
     DlgInputConfig::Open(1);
 }
 
+void OnOpenVideoSettings(uiMenuItem* item, uiWindow* window, void* blarg)
+{
+    DlgVideoSettings::Open();
+}
+
 void OnOpenAudioSettings(uiMenuItem* item, uiWindow* window, void* blarg)
 {
     DlgAudioSettings::Open();
@@ -1504,26 +2000,31 @@ void EnsureProperMinSize()
 {
     bool isHori = (ScreenRotation == 1 || ScreenRotation == 3);
 
+    int w0 = 256;
+    int h0 = 192;
+    int w1 = 256;
+    int h1 = 192;
+
     if (ScreenLayout == 0) // natural
     {
         if (isHori)
-            SetMinSize(384+ScreenGap, 256);
+            SetMinSize(h0+ScreenGap+h1, std::max(w0,w1));
         else
-            SetMinSize(256, 384+ScreenGap);
+            SetMinSize(std::max(w0,w1), h0+ScreenGap+h1);
     }
     else if (ScreenLayout == 1) // vertical
     {
         if (isHori)
-            SetMinSize(192, 512+ScreenGap);
+            SetMinSize(std::max(h0,h1), w0+ScreenGap+w1);
         else
-            SetMinSize(256, 384+ScreenGap);
+            SetMinSize(std::max(w0,w1), h0+ScreenGap+h1);
     }
     else // horizontal
     {
         if (isHori)
-            SetMinSize(384+ScreenGap, 256);
+            SetMinSize(h0+ScreenGap+h1, std::max(w0,w1));
         else
-            SetMinSize(512+ScreenGap, 192);
+            SetMinSize(w0+ScreenGap+w1, std::max(h0,h1));
     }
 }
 
@@ -1534,6 +2035,8 @@ void OnSetScreenSize(uiMenuItem* item, uiWindow* window, void* param)
 
     int w = 256*factor;
     int h = 192*factor;
+
+    // FIXME
 
     if (ScreenLayout == 0) // natural
     {
@@ -1642,17 +2145,32 @@ void OnSetLimitFPS(uiMenuItem* item, uiWindow* window, void* blarg)
     else          Config::LimitFPS = false;
 }
 
+void OnSetShowOSD(uiMenuItem* item, uiWindow* window, void* blarg)
+{
+    int chk = uiMenuItemChecked(item);
+    if (chk != 0) Config::ShowOSD = true;
+    else          Config::ShowOSD = false;
+}
+
 void ApplyNewSettings(int type)
 {
-    if (!RunningSomething) return;
+    if (!RunningSomething)
+    {
+        if (type == 1) return;
+    }
 
     int prevstatus = EmuRunning;
-    EmuRunning = 2;
-    while (EmuStatus != 2);
+    EmuRunning = 3;
+    while (EmuStatus != 3);
 
-    if (type == 0) // general emu settings
+    if (type == 0) // 3D renderer settings
     {
-        GPU3D::SoftRenderer::SetupRenderThread();
+        if (Screen_UseGL) uiGLMakeContextCurrent(GLContext);
+        GPU3D::UpdateRendererConfig();
+        if (Screen_UseGL) uiGLMakeContextCurrent(NULL);
+
+        GL_3DScale = Config::GL_ScaleFactor; // dorp
+        GL_ScreenSizeDirty = true;
     }
     else if (type == 1) // wifi settings
     {
@@ -1665,8 +2183,279 @@ void ApplyNewSettings(int type)
         Platform::LAN_DeInit();
         Platform::LAN_Init();
     }
+    else if (type == 2) // video output method
+    {
+        bool usegl = Config::ScreenUseGL || (Config::_3DRenderer != 0);
+        if (usegl != Screen_UseGL)
+        {
+            if (Screen_UseGL) uiGLMakeContextCurrent(GLContext);
+            GPU3D::DeInitRenderer();
+            OSD::DeInit(Screen_UseGL);
+            if (Screen_UseGL) uiGLMakeContextCurrent(NULL);
+
+            Screen_UseGL = usegl;
+            RecreateMainWindow(usegl);
+
+            if (Screen_UseGL) uiGLMakeContextCurrent(GLContext);
+            GPU3D::InitRenderer(Screen_UseGL);
+            if (Screen_UseGL) uiGLMakeContextCurrent(NULL);
+        }
+    }
+    else if (type == 3) // 3D renderer
+    {
+        if (Screen_UseGL) uiGLMakeContextCurrent(GLContext);
+        GPU3D::DeInitRenderer();
+        GPU3D::InitRenderer(Screen_UseGL);
+        if (Screen_UseGL) uiGLMakeContextCurrent(NULL);
+    }
 
     EmuRunning = prevstatus;
+}
+
+
+void CreateMainWindowMenu()
+{
+    uiMenu* menu;
+    uiMenuItem* menuitem;
+
+    menu = uiNewMenu("File");
+    menuitem = uiMenuAppendItem(menu, "Open ROM...");
+    uiMenuItemOnClicked(menuitem, OnOpenFile, NULL);
+    uiMenuAppendSeparator(menu);
+    {
+        uiMenu* submenu = uiNewMenu("Save state");
+
+        for (int i = 0; i < 9; i++)
+        {
+            char name[32];
+            if (i < 8)
+                sprintf(name, "%d\tShift+F%d", kSavestateNum[i], kSavestateNum[i]);
+            else
+                strcpy(name, "File...\tShift+F9");
+
+            uiMenuItem* ssitem = uiMenuAppendItem(submenu, name);
+            uiMenuItemOnClicked(ssitem, OnSaveState, (void*)&kSavestateNum[i]);
+
+            MenuItem_SaveStateSlot[i] = ssitem;
+        }
+
+        MenuItem_SaveState = uiMenuAppendSubmenu(menu, submenu);
+    }
+    {
+        uiMenu* submenu = uiNewMenu("Load state");
+
+        for (int i = 0; i < 9; i++)
+        {
+            char name[32];
+            if (i < 8)
+                sprintf(name, "%d\tF%d", kSavestateNum[i], kSavestateNum[i]);
+            else
+                strcpy(name, "File...\tF9");
+
+            uiMenuItem* ssitem = uiMenuAppendItem(submenu, name);
+            uiMenuItemOnClicked(ssitem, OnLoadState, (void*)&kSavestateNum[i]);
+
+            MenuItem_LoadStateSlot[i] = ssitem;
+        }
+
+        MenuItem_LoadState = uiMenuAppendSubmenu(menu, submenu);
+    }
+    menuitem = uiMenuAppendItem(menu, "Undo state load\tF12");
+    uiMenuItemOnClicked(menuitem, OnUndoStateLoad, NULL);
+    MenuItem_UndoStateLoad = menuitem;
+    uiMenuAppendSeparator(menu);
+    menuitem = uiMenuAppendItem(menu, "Quit");
+    uiMenuItemOnClicked(menuitem, OnCloseByMenu, NULL);
+
+    menu = uiNewMenu("System");
+    menuitem = uiMenuAppendItem(menu, "Run");
+    uiMenuItemOnClicked(menuitem, OnRun, NULL);
+    menuitem = uiMenuAppendCheckItem(menu, "Pause");
+    uiMenuItemOnClicked(menuitem, OnPause, NULL);
+    MenuItem_Pause = menuitem;
+    uiMenuAppendSeparator(menu);
+    menuitem = uiMenuAppendItem(menu, "Reset");
+    uiMenuItemOnClicked(menuitem, OnReset, NULL);
+    MenuItem_Reset = menuitem;
+    menuitem = uiMenuAppendItem(menu, "Stop");
+    uiMenuItemOnClicked(menuitem, OnStop, NULL);
+    MenuItem_Stop = menuitem;
+
+    menu = uiNewMenu("Config");
+    {
+        menuitem = uiMenuAppendItem(menu, "Emu settings");
+        uiMenuItemOnClicked(menuitem, OnOpenEmuSettings, NULL);
+        menuitem = uiMenuAppendItem(menu, "Input config");
+        uiMenuItemOnClicked(menuitem, OnOpenInputConfig, NULL);
+        menuitem = uiMenuAppendItem(menu, "Hotkey config");
+        uiMenuItemOnClicked(menuitem, OnOpenHotkeyConfig, NULL);
+        menuitem = uiMenuAppendItem(menu, "Video settings");
+        uiMenuItemOnClicked(menuitem, OnOpenVideoSettings, NULL);
+        menuitem = uiMenuAppendItem(menu, "Audio settings");
+        uiMenuItemOnClicked(menuitem, OnOpenAudioSettings, NULL);
+        menuitem = uiMenuAppendItem(menu, "Wifi settings");
+        uiMenuItemOnClicked(menuitem, OnOpenWifiSettings, NULL);
+    }
+    uiMenuAppendSeparator(menu);
+    {
+        uiMenu* submenu = uiNewMenu("Savestate settings");
+
+        MenuItem_SavestateSRAMReloc = uiMenuAppendCheckItem(submenu, "Separate savefiles");
+        uiMenuItemOnClicked(MenuItem_SavestateSRAMReloc, OnSetSavestateSRAMReloc, NULL);
+
+        uiMenuAppendSubmenu(menu, submenu);
+    }
+    uiMenuAppendSeparator(menu);
+    {
+        uiMenu* submenu = uiNewMenu("Screen size");
+
+        for (int i = 0; i < 4; i++)
+        {
+            char name[32];
+            sprintf(name, "%dx", kScreenSize[i]);
+            uiMenuItem* item = uiMenuAppendItem(submenu, name);
+            uiMenuItemOnClicked(item, OnSetScreenSize, (void*)&kScreenSize[i]);
+        }
+
+        uiMenuAppendSubmenu(menu, submenu);
+    }
+    {
+        uiMenu* submenu = uiNewMenu("Screen rotation");
+
+        for (int i = 0; i < 4; i++)
+        {
+            char name[32];
+            sprintf(name, "%d", kScreenRot[i]*90);
+            MenuItem_ScreenRot[i] = uiMenuAppendCheckItem(submenu, name);
+            uiMenuItemOnClicked(MenuItem_ScreenRot[i], OnSetScreenRotation, (void*)&kScreenRot[i]);
+        }
+
+        uiMenuAppendSubmenu(menu, submenu);
+    }
+    {
+        uiMenu* submenu = uiNewMenu("Mid-screen gap");
+
+        //for (int i = 0; kScreenGap[i] != -1; i++)
+        for (int i = 0; i < 6; i++)
+        {
+            char name[32];
+            sprintf(name, "%d pixels", kScreenGap[i]);
+            MenuItem_ScreenGap[i] = uiMenuAppendCheckItem(submenu, name);
+            uiMenuItemOnClicked(MenuItem_ScreenGap[i], OnSetScreenGap, (void*)&kScreenGap[i]);
+        }
+
+        uiMenuAppendSubmenu(menu, submenu);
+    }
+    {
+        uiMenu* submenu = uiNewMenu("Screen layout");
+
+        MenuItem_ScreenLayout[0] = uiMenuAppendCheckItem(submenu, "Natural");
+        uiMenuItemOnClicked(MenuItem_ScreenLayout[0], OnSetScreenLayout, (void*)&kScreenLayout[0]);
+        MenuItem_ScreenLayout[1] = uiMenuAppendCheckItem(submenu, "Vertical");
+        uiMenuItemOnClicked(MenuItem_ScreenLayout[1], OnSetScreenLayout, (void*)&kScreenLayout[1]);
+        MenuItem_ScreenLayout[2] = uiMenuAppendCheckItem(submenu, "Horizontal");
+        uiMenuItemOnClicked(MenuItem_ScreenLayout[2], OnSetScreenLayout, (void*)&kScreenLayout[2]);
+
+        uiMenuAppendSubmenu(menu, submenu);
+    }
+    {
+        uiMenu* submenu = uiNewMenu("Screen sizing");
+
+        MenuItem_ScreenSizing[0] = uiMenuAppendCheckItem(submenu, "Even");
+        uiMenuItemOnClicked(MenuItem_ScreenSizing[0], OnSetScreenSizing, (void*)&kScreenSizing[0]);
+        MenuItem_ScreenSizing[1] = uiMenuAppendCheckItem(submenu, "Emphasize top");
+        uiMenuItemOnClicked(MenuItem_ScreenSizing[1], OnSetScreenSizing, (void*)&kScreenSizing[1]);
+        MenuItem_ScreenSizing[2] = uiMenuAppendCheckItem(submenu, "Emphasize bottom");
+        uiMenuItemOnClicked(MenuItem_ScreenSizing[2], OnSetScreenSizing, (void*)&kScreenSizing[2]);
+        MenuItem_ScreenSizing[3] = uiMenuAppendCheckItem(submenu, "Auto");
+        uiMenuItemOnClicked(MenuItem_ScreenSizing[3], OnSetScreenSizing, (void*)&kScreenSizing[3]);
+
+        uiMenuAppendSubmenu(menu, submenu);
+    }
+
+    MenuItem_ScreenFilter = uiMenuAppendCheckItem(menu, "Screen filtering");
+    uiMenuItemOnClicked(MenuItem_ScreenFilter, OnSetScreenFiltering, NULL);
+
+    MenuItem_LimitFPS = uiMenuAppendCheckItem(menu, "Limit framerate");
+    uiMenuItemOnClicked(MenuItem_LimitFPS, OnSetLimitFPS, NULL);
+
+    MenuItem_ShowOSD = uiMenuAppendCheckItem(menu, "Show OSD");
+    uiMenuItemOnClicked(MenuItem_ShowOSD, OnSetShowOSD, NULL);
+}
+
+void CreateMainWindow(bool opengl)
+{
+    MainWindow = uiNewWindow("melonDS " MELONDS_VERSION,
+                             WindowWidth, WindowHeight,
+                             Config::WindowMaximized, 1, 1);
+    uiWindowOnClosing(MainWindow, OnCloseWindow, NULL);
+
+    uiWindowSetDropTarget(MainWindow, 1);
+    uiWindowOnDropFile(MainWindow, OnDropFile, NULL);
+
+    uiWindowOnGetFocus(MainWindow, OnGetFocus, NULL);
+    uiWindowOnLoseFocus(MainWindow, OnLoseFocus, NULL);
+
+    ScreenDrawInited = false;
+    bool opengl_good = opengl;
+
+    if (!opengl) MainDrawArea = uiNewArea(&MainDrawAreaHandler);
+    else         MainDrawArea = uiNewGLArea(&MainDrawAreaHandler, kGLVersions);
+
+    uiWindowSetChild(MainWindow, uiControl(MainDrawArea));
+    uiControlSetMinSize(uiControl(MainDrawArea), 256, 384);
+    uiAreaSetBackgroundColor(MainDrawArea, 0, 0, 0);
+
+    uiControlShow(uiControl(MainWindow));
+    uiControlSetFocus(uiControl(MainDrawArea));
+
+    if (opengl_good)
+    {
+        GLContext = uiAreaGetGLContext(MainDrawArea);
+        if (!GLContext) opengl_good = false;
+    }
+    if (opengl_good)
+    {
+        uiGLMakeContextCurrent(GLContext);
+        if (!GLScreen_Init()) opengl_good = false;
+        if (opengl_good)
+        {
+            OpenGL_UseShaderProgram(GL_ScreenShaderOSD);
+            OSD::Init(true);
+        }
+        uiGLMakeContextCurrent(NULL);
+    }
+
+    if (opengl && !opengl_good)
+    {
+        printf("OpenGL: initialization failed\n");
+        RecreateMainWindow(false);
+        Screen_UseGL = false;
+    }
+
+    if (!opengl) OSD::Init(false);
+}
+
+void DestroyMainWindow()
+{
+    uiControlDestroy(uiControl(MainWindow));
+
+    if (ScreenBitmap[0]) uiDrawFreeBitmap(ScreenBitmap[0]);
+    if (ScreenBitmap[1]) uiDrawFreeBitmap(ScreenBitmap[1]);
+
+    ScreenBitmap[0] = NULL;
+    ScreenBitmap[1] = NULL;
+}
+
+void RecreateMainWindow(bool opengl)
+{
+    int winX, winY, maxi;
+    uiWindowPosition(MainWindow, &winX, &winY);
+    maxi = uiWindowMaximized(MainWindow);
+    DestroyMainWindow();
+    CreateMainWindow(opengl);
+    uiWindowSetPosition(MainWindow, winX, winY);
+    uiWindowSetMaximized(MainWindow, maxi);
 }
 
 
@@ -1771,209 +2560,25 @@ int main(int argc, char** argv)
         }
     }
 
-    uiMenu* menu;
-    uiMenuItem* menuitem;
+    CreateMainWindowMenu();
 
-    menu = uiNewMenu("File");
-    menuitem = uiMenuAppendItem(menu, "Open ROM...");
-    uiMenuItemOnClicked(menuitem, OnOpenFile, NULL);
-    uiMenuAppendSeparator(menu);
-    {
-        uiMenu* submenu = uiNewMenu("Save state");
+    MainDrawAreaHandler.Draw = OnAreaDraw;
+    MainDrawAreaHandler.MouseEvent = OnAreaMouseEvent;
+    MainDrawAreaHandler.MouseCrossed = OnAreaMouseCrossed;
+    MainDrawAreaHandler.DragBroken = OnAreaDragBroken;
+    MainDrawAreaHandler.KeyEvent = OnAreaKeyEvent;
+    MainDrawAreaHandler.Resize = OnAreaResize;
 
-        for (int i = 0; i < 9; i++)
-        {
-            char name[32];
-            if (i < 8)
-                sprintf(name, "%d\tShift+F%d", kSavestateNum[i], kSavestateNum[i]);
-            else
-                strcpy(name, "File...\tShift+F9");
+    WindowWidth = Config::WindowWidth;
+    WindowHeight = Config::WindowHeight;
 
-            uiMenuItem* ssitem = uiMenuAppendItem(submenu, name);
-            uiMenuItemOnClicked(ssitem, OnSaveState, (void*)&kSavestateNum[i]);
+    Screen_UseGL = Config::ScreenUseGL || (Config::_3DRenderer != 0);
 
-            MenuItem_SaveStateSlot[i] = ssitem;
-        }
+    GL_3DScale = Config::GL_ScaleFactor;
+    if      (GL_3DScale < 1) GL_3DScale = 1;
+    else if (GL_3DScale > 8) GL_3DScale = 8;
 
-        MenuItem_SaveState = uiMenuAppendSubmenu(menu, submenu);
-    }
-    {
-        uiMenu* submenu = uiNewMenu("Load state");
-
-        for (int i = 0; i < 9; i++)
-        {
-            char name[32];
-            if (i < 8)
-                sprintf(name, "%d\tF%d", kSavestateNum[i], kSavestateNum[i]);
-            else
-                strcpy(name, "File...\tF9");
-
-            uiMenuItem* ssitem = uiMenuAppendItem(submenu, name);
-            uiMenuItemOnClicked(ssitem, OnLoadState, (void*)&kSavestateNum[i]);
-
-            MenuItem_LoadStateSlot[i] = ssitem;
-        }
-
-        MenuItem_LoadState = uiMenuAppendSubmenu(menu, submenu);
-    }
-    menuitem = uiMenuAppendItem(menu, "Undo state load\tF12");
-    uiMenuItemOnClicked(menuitem, OnUndoStateLoad, NULL);
-    MenuItem_UndoStateLoad = menuitem;
-    uiMenuAppendSeparator(menu);
-    menuitem = uiMenuAppendItem(menu, "Quit");
-    uiMenuItemOnClicked(menuitem, OnCloseByMenu, NULL);
-
-    menu = uiNewMenu("System");
-    menuitem = uiMenuAppendItem(menu, "Run");
-    uiMenuItemOnClicked(menuitem, OnRun, NULL);
-    menuitem = uiMenuAppendCheckItem(menu, "Pause");
-    uiMenuItemOnClicked(menuitem, OnPause, NULL);
-    MenuItem_Pause = menuitem;
-    uiMenuAppendSeparator(menu);
-    menuitem = uiMenuAppendItem(menu, "Reset");
-    uiMenuItemOnClicked(menuitem, OnReset, NULL);
-    MenuItem_Reset = menuitem;
-    menuitem = uiMenuAppendItem(menu, "Stop");
-    uiMenuItemOnClicked(menuitem, OnStop, NULL);
-    MenuItem_Stop = menuitem;
-
-    menu = uiNewMenu("Config");
-    {
-        menuitem = uiMenuAppendItem(menu, "Emu settings");
-        uiMenuItemOnClicked(menuitem, OnOpenEmuSettings, NULL);
-        menuitem = uiMenuAppendItem(menu, "Input config");
-        uiMenuItemOnClicked(menuitem, OnOpenInputConfig, NULL);
-        menuitem = uiMenuAppendItem(menu, "Hotkey config");
-        uiMenuItemOnClicked(menuitem, OnOpenHotkeyConfig, NULL);
-        menuitem = uiMenuAppendItem(menu, "Audio settings");
-        uiMenuItemOnClicked(menuitem, OnOpenAudioSettings, NULL);
-        menuitem = uiMenuAppendItem(menu, "Wifi settings");
-        uiMenuItemOnClicked(menuitem, OnOpenWifiSettings, NULL);
-    }
-    uiMenuAppendSeparator(menu);
-    {
-        uiMenu* submenu = uiNewMenu("Savestate settings");
-
-        MenuItem_SavestateSRAMReloc = uiMenuAppendCheckItem(submenu, "Separate savefiles");
-        uiMenuItemOnClicked(MenuItem_SavestateSRAMReloc, OnSetSavestateSRAMReloc, NULL);
-
-        uiMenuAppendSubmenu(menu, submenu);
-    }
-    uiMenuAppendSeparator(menu);
-    {
-        uiMenu* submenu = uiNewMenu("Screen size");
-
-        for (int i = 0; i < 4; i++)
-        {
-            char name[32];
-            sprintf(name, "%dx", kScreenSize[i]);
-            uiMenuItem* item = uiMenuAppendItem(submenu, name);
-            uiMenuItemOnClicked(item, OnSetScreenSize, (void*)&kScreenSize[i]);
-        }
-
-        uiMenuAppendSubmenu(menu, submenu);
-    }
-    {
-        uiMenu* submenu = uiNewMenu("Screen rotation");
-
-        for (int i = 0; i < 4; i++)
-        {
-            char name[32];
-            sprintf(name, "%d", kScreenRot[i]*90);
-            MenuItem_ScreenRot[i] = uiMenuAppendCheckItem(submenu, name);
-            uiMenuItemOnClicked(MenuItem_ScreenRot[i], OnSetScreenRotation, (void*)&kScreenRot[i]);
-        }
-
-        uiMenuAppendSubmenu(menu, submenu);
-    }
-    {
-        uiMenu* submenu = uiNewMenu("Mid-screen gap");
-
-        //for (int i = 0; kScreenGap[i] != -1; i++)
-        for (int i = 0; i < 6; i++)
-        {
-            char name[32];
-            sprintf(name, "%d pixels", kScreenGap[i]);
-            MenuItem_ScreenGap[i] = uiMenuAppendCheckItem(submenu, name);
-            uiMenuItemOnClicked(MenuItem_ScreenGap[i], OnSetScreenGap, (void*)&kScreenGap[i]);
-        }
-
-        uiMenuAppendSubmenu(menu, submenu);
-    }
-    {
-        uiMenu* submenu = uiNewMenu("Screen layout");
-
-        MenuItem_ScreenLayout[0] = uiMenuAppendCheckItem(submenu, "Natural");
-        uiMenuItemOnClicked(MenuItem_ScreenLayout[0], OnSetScreenLayout, (void*)&kScreenLayout[0]);
-        MenuItem_ScreenLayout[1] = uiMenuAppendCheckItem(submenu, "Vertical");
-        uiMenuItemOnClicked(MenuItem_ScreenLayout[1], OnSetScreenLayout, (void*)&kScreenLayout[1]);
-        MenuItem_ScreenLayout[2] = uiMenuAppendCheckItem(submenu, "Horizontal");
-        uiMenuItemOnClicked(MenuItem_ScreenLayout[2], OnSetScreenLayout, (void*)&kScreenLayout[2]);
-
-        uiMenuAppendSubmenu(menu, submenu);
-    }
-    {
-        uiMenu* submenu = uiNewMenu("Screen sizing");
-
-        MenuItem_ScreenSizing[0] = uiMenuAppendCheckItem(submenu, "Even");
-        uiMenuItemOnClicked(MenuItem_ScreenSizing[0], OnSetScreenSizing, (void*)&kScreenSizing[0]);
-        MenuItem_ScreenSizing[1] = uiMenuAppendCheckItem(submenu, "Emphasize top");
-        uiMenuItemOnClicked(MenuItem_ScreenSizing[1], OnSetScreenSizing, (void*)&kScreenSizing[1]);
-        MenuItem_ScreenSizing[2] = uiMenuAppendCheckItem(submenu, "Emphasize bottom");
-        uiMenuItemOnClicked(MenuItem_ScreenSizing[2], OnSetScreenSizing, (void*)&kScreenSizing[2]);
-        MenuItem_ScreenSizing[3] = uiMenuAppendCheckItem(submenu, "Auto");
-        uiMenuItemOnClicked(MenuItem_ScreenSizing[3], OnSetScreenSizing, (void*)&kScreenSizing[3]);
-
-        uiMenuAppendSubmenu(menu, submenu);
-    }
-    menuitem = uiMenuAppendCheckItem(menu, "Screen filtering");
-    uiMenuItemOnClicked(menuitem, OnSetScreenFiltering, NULL);
-    uiMenuItemSetChecked(menuitem, Config::ScreenFilter==1);
-
-    menuitem = uiMenuAppendCheckItem(menu, "Limit framerate");
-    uiMenuItemOnClicked(menuitem, OnSetLimitFPS, NULL);
-    uiMenuItemSetChecked(menuitem, Config::LimitFPS==1);
-
-
-    int w = Config::WindowWidth;
-    int h = Config::WindowHeight;
-    //if (w < 256) w = 256;
-    //if (h < 384) h = 384;
-
-    WindowWidth = w;
-    WindowHeight = h;
-
-    MainWindow = uiNewWindow("melonDS " MELONDS_VERSION, w, h, Config::WindowMaximized, 1, 1);
-    uiWindowOnClosing(MainWindow, OnCloseWindow, NULL);
-
-    uiWindowSetDropTarget(MainWindow, 1);
-    uiWindowOnDropFile(MainWindow, OnDropFile, NULL);
-
-    uiWindowOnGetFocus(MainWindow, OnGetFocus, NULL);
-    uiWindowOnLoseFocus(MainWindow, OnLoseFocus, NULL);
-
-    //uiMenuItemDisable(MenuItem_SaveState);
-    //uiMenuItemDisable(MenuItem_LoadState);
-    for (int i = 0; i < 9; i++) uiMenuItemDisable(MenuItem_SaveStateSlot[i]);
-    for (int i = 0; i < 9; i++) uiMenuItemDisable(MenuItem_LoadStateSlot[i]);
-    uiMenuItemDisable(MenuItem_UndoStateLoad);
-
-    uiMenuItemDisable(MenuItem_Pause);
-    uiMenuItemDisable(MenuItem_Reset);
-    uiMenuItemDisable(MenuItem_Stop);
-
-    uiAreaHandler areahandler;
-    areahandler.Draw = OnAreaDraw;
-    areahandler.MouseEvent = OnAreaMouseEvent;
-    areahandler.MouseCrossed = OnAreaMouseCrossed;
-    areahandler.DragBroken = OnAreaDragBroken;
-    areahandler.KeyEvent = OnAreaKeyEvent;
-    areahandler.Resize = OnAreaResize;
-
-    MainDrawArea = uiNewArea(&areahandler);
-    uiWindowSetChild(MainWindow, uiControl(MainDrawArea));
-    uiControlSetMinSize(uiControl(MainDrawArea), 256, 384);
-    uiAreaSetBackgroundColor(MainDrawArea, 0, 0, 0); // TODO: make configurable?
+    CreateMainWindow(Screen_UseGL);
 
     ScreenRotation = Config::ScreenRotation;
     ScreenGap = Config::ScreenGap;
@@ -1985,6 +2590,14 @@ int main(int argc, char** argv)
     SANITIZE(ScreenLayout, 0, 2);
     SANITIZE(ScreenSizing, 0, 3);
 #undef SANITIZE
+
+    for (int i = 0; i < 9; i++) uiMenuItemDisable(MenuItem_SaveStateSlot[i]);
+    for (int i = 0; i < 9; i++) uiMenuItemDisable(MenuItem_LoadStateSlot[i]);
+    uiMenuItemDisable(MenuItem_UndoStateLoad);
+
+    uiMenuItemDisable(MenuItem_Pause);
+    uiMenuItemDisable(MenuItem_Reset);
+    uiMenuItemDisable(MenuItem_Stop);
 
     uiMenuItemSetChecked(MenuItem_SavestateSRAMReloc, Config::SavestateRelocSRAM?1:0);
 
@@ -1999,6 +2612,10 @@ int main(int argc, char** argv)
     }
 
     OnSetScreenRotation(MenuItem_ScreenRot[ScreenRotation], MainWindow, (void*)&kScreenRot[ScreenRotation]);
+
+    uiMenuItemSetChecked(MenuItem_ScreenFilter, Config::ScreenFilter==1);
+    uiMenuItemSetChecked(MenuItem_LimitFPS, Config::LimitFPS==1);
+    uiMenuItemSetChecked(MenuItem_ShowOSD, Config::ShowOSD==1);
 
     SDL_AudioSpec whatIwant, whatIget;
     memset(&whatIwant, 0, sizeof(SDL_AudioSpec));
@@ -2041,11 +2658,9 @@ int main(int argc, char** argv)
     MicWavBuffer = NULL;
     if (Config::MicInputType == 3) MicLoadWav(Config::MicWavPath);
 
-    // TODO: support more joysticks
-    if (SDL_NumJoysticks() > 0)
-        Joystick = SDL_JoystickOpen(0);
-    else
-        Joystick = NULL;
+    JoystickID = Config::JoystickID;
+    Joystick = NULL;
+    OpenJoystick();
 
     EmuRunning = 2;
     RunningSomething = false;
@@ -2068,8 +2683,6 @@ int main(int argc, char** argv)
         }
     }
 
-    uiControlShow(uiControl(MainWindow));
-    uiControlSetFocus(uiControl(MainDrawArea));
     uiMain();
 
     EmuRunning = 0;
@@ -2081,14 +2694,15 @@ int main(int argc, char** argv)
 
     if (MicWavBuffer) delete[] MicWavBuffer;
 
+    if (ScreenBitmap[0]) uiDrawFreeBitmap(ScreenBitmap[0]);
+    if (ScreenBitmap[1]) uiDrawFreeBitmap(ScreenBitmap[1]);
+
     Config::ScreenRotation = ScreenRotation;
     Config::ScreenGap = ScreenGap;
     Config::ScreenLayout = ScreenLayout;
     Config::ScreenSizing = ScreenSizing;
 
     Config::Save();
-
-    if (ScreenBitmap) uiDrawFreeBitmap(ScreenBitmap);
 
     uiUninit();
     SDL_Quit();

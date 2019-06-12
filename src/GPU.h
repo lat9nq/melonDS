@@ -63,7 +63,13 @@ extern u32 VRAMMap_Texture[4];
 extern u32 VRAMMap_TexPal[8];
 extern u32 VRAMMap_ARM7[2];
 
-extern u32 Framebuffer[256*192*2];
+extern u8* VRAMPtr_ABG[0x20];
+extern u8* VRAMPtr_AOBJ[0x10];
+extern u8* VRAMPtr_BBG[0x8];
+extern u8* VRAMPtr_BOBJ[0x8];
+
+extern int FrontBuffer;
+extern u32* Framebuffer[2][2];
 
 extern GPU2D* GPU2D_A;
 extern GPU2D* GPU2D_B;
@@ -76,6 +82,10 @@ void Stop();
 
 void DoSavestate(Savestate* file);
 
+void SetDisplaySettings(bool accel);
+
+
+u8* GetUniqueBankPtr(u32 mask, u32 offset);
 
 void MapVRAM_AB(u32 bank, u8 cnt);
 void MapVRAM_CD(u32 bank, u8 cnt);
@@ -217,7 +227,10 @@ void WriteVRAM_LCDC(u32 addr, T val)
 template<typename T>
 T ReadVRAM_ABG(u32 addr)
 {
-    u32 ret = 0;
+    u8* ptr = VRAMPtr_ABG[(addr >> 14) & 0x1F];
+    if (ptr) return *(T*)&ptr[addr & 0x3FFF];
+
+    T ret = 0;
     u32 mask = VRAMMap_ABG[(addr >> 14) & 0x1F];
 
     if (mask & (1<<0)) ret |= *(T*)&VRAM_A[addr & 0x1FFFF];
@@ -249,7 +262,10 @@ void WriteVRAM_ABG(u32 addr, T val)
 template<typename T>
 T ReadVRAM_AOBJ(u32 addr)
 {
-    u32 ret = 0;
+    u8* ptr = VRAMPtr_AOBJ[(addr >> 14) & 0xF];
+    if (ptr) return *(T*)&ptr[addr & 0x3FFF];
+
+    T ret = 0;
     u32 mask = VRAMMap_AOBJ[(addr >> 14) & 0xF];
 
     if (mask & (1<<0)) ret |= *(T*)&VRAM_A[addr & 0x1FFFF];
@@ -277,7 +293,10 @@ void WriteVRAM_AOBJ(u32 addr, T val)
 template<typename T>
 T ReadVRAM_BBG(u32 addr)
 {
-    u32 ret = 0;
+    u8* ptr = VRAMPtr_BBG[(addr >> 14) & 0x7];
+    if (ptr) return *(T*)&ptr[addr & 0x3FFF];
+
+    T ret = 0;
     u32 mask = VRAMMap_BBG[(addr >> 14) & 0x7];
 
     if (mask & (1<<2)) ret |= *(T*)&VRAM_C[addr & 0x1FFFF];
@@ -301,7 +320,10 @@ void WriteVRAM_BBG(u32 addr, T val)
 template<typename T>
 T ReadVRAM_BOBJ(u32 addr)
 {
-    u32 ret = 0;
+    u8* ptr = VRAMPtr_BOBJ[(addr >> 14) & 0x7];
+    if (ptr) return *(T*)&ptr[addr & 0x3FFF];
+
+    T ret = 0;
     u32 mask = VRAMMap_BOBJ[(addr >> 14) & 0x7];
 
     if (mask & (1<<3)) ret |= *(T*)&VRAM_D[addr & 0x1FFFF];
@@ -323,7 +345,7 @@ void WriteVRAM_BOBJ(u32 addr, T val)
 template<typename T>
 T ReadVRAM_ARM7(u32 addr)
 {
-    u32 ret = 0;
+    T ret = 0;
     u32 mask = VRAMMap_ARM7[(addr >> 17) & 0x1];
 
     if (mask & (1<<2)) ret |= *(T*)&VRAM_C[addr & 0x1FFFF];
@@ -364,7 +386,7 @@ T ReadVRAM_OBJ(u32 addr)
 template<typename T>
 T ReadVRAM_Texture(u32 addr)
 {
-    u32 ret = 0;
+    T ret = 0;
     u32 mask = VRAMMap_Texture[(addr >> 17) & 0x3];
 
     if (mask & (1<<0)) ret |= *(T*)&VRAM_A[addr & 0x1FFFF];
@@ -378,7 +400,7 @@ T ReadVRAM_Texture(u32 addr)
 template<typename T>
 T ReadVRAM_TexPal(u32 addr)
 {
-    u32 ret = 0;
+    T ret = 0;
     u32 mask = VRAMMap_TexPal[(addr >> 14) & 0x7];
 
     if (mask & (1<<4)) ret |= *(T*)&VRAM_E[addr & 0xFFFF];

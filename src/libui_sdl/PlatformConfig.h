@@ -25,7 +25,10 @@ enum
 {
     HK_Lid = 0,
     HK_Mic,
-
+    HK_Pause,
+    HK_Reset,
+    HK_FastForward,
+    HK_FastForwardToggle,
     HK_MAX
 };
 
@@ -38,6 +41,8 @@ extern int JoyMapping[12];
 extern int HKKeyMapping[HK_MAX];
 extern int HKJoyMapping[HK_MAX];
 
+extern int JoystickID;
+
 extern int WindowWidth;
 extern int WindowHeight;
 extern int WindowMaximized;
@@ -48,7 +53,11 @@ extern int ScreenLayout;
 extern int ScreenSizing;
 extern int ScreenFilter;
 
+extern int ScreenUseGL;
+extern int ScreenRatio;
+
 extern int LimitFPS;
+extern int ShowOSD;
 
 extern int DirectBoot;
 

@@ -26,11 +26,11 @@ namespace Config
 
 typedef struct
 {
-    char Name[16];
+    char Name[32];
     int Type;
     void* Value;
     int DefaultInt;
-    char* DefaultStr;
+    const char* DefaultStr;
     int StrLength; // should be set to actual array length minus one
 
 } ConfigEntry;
@@ -40,8 +40,12 @@ bool HasConfigFile(const char* fileName);
 void Load();
 void Save();
 
+extern int _3DRenderer;
 extern int Threaded3D;
 extern int Frameskip;
+
+extern int GL_ScaleFactor;
+extern int GL_Antialias;
 
 }
 
