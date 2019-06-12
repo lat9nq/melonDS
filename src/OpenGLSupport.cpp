@@ -18,6 +18,10 @@
 
 #include "OpenGLSupport.h"
 
+namespace GPU3D
+{
+namespace GLRenderer
+{
 
 
 DO_PROCLIST(DECLPROC);
@@ -125,4 +129,7 @@ void OpenGL_DeleteShaderProgram(GLuint* ids)
 void OpenGL_UseShaderProgram(GLuint* ids)
 {
     glUseProgram(ids[2]);
+}
+
+}
 }

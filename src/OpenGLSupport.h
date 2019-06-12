@@ -21,8 +21,13 @@
 
 #include <stdio.h>
 #include <string.h>
+
+#ifdef __SWITCH__
+#include <glad/glad.h>
+#else
 #include <GL/gl.h>
 #include <GL/glext.h>
+#endif
 
 #include "Platform.h"
 
@@ -123,6 +128,10 @@
      \
     func(GLGETSTRINGI, glGetStringi); \
 
+namespace GPU3D
+{
+namespace GLRenderer
+{
 
 DO_PROCLIST(DECLPROC_EXT);
 
@@ -133,5 +142,8 @@ bool OpenGL_BuildShaderProgram(const char* vs, const char* fs, GLuint* ids, cons
 bool OpenGL_LinkShaderProgram(GLuint* ids);
 void OpenGL_DeleteShaderProgram(GLuint* ids);
 void OpenGL_UseShaderProgram(GLuint* ids);
+
+}
+}
 
 #endif // OPENGLSUPPORT_H

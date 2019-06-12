@@ -864,11 +864,11 @@ void StartHBlank(u32 line)
     DispStat[0] |= (1<<1);
     DispStat[1] |= (1<<1);
 
-    if (VCount < 192)
+    if (VCount < 192 && FrameskipVal == 0)
     {
         // draw
         // note: this should start 48 cycles after the scanline start
-        if (line < 192 && FrameskipVal == 0)
+        if (line < 192)
         {
             GPU2D_A->DrawScanline(line);
             GPU2D_B->DrawScanline(line);
@@ -883,16 +883,11 @@ void StartHBlank(u32 line)
 
         NDS::CheckDMAs(0, 0x02);
     }
-    else if (VCount == 215)
+    else if (VCount == 215 && (FrameskipVal == 0 || Config::_3DRenderer == 0))
     {
         GPU3D::VCount215();
-
-        if (FrameskipVal >= Config::Frameskip)
-            FrameskipVal = 0;
-        else
-            FrameskipVal++;
     }
-    else if (VCount == 262)
+    else if (VCount == 262 && FrameskipVal == 0)
     {
         GPU2D_A->DrawSprites(0);
         GPU2D_B->DrawSprites(0);
@@ -909,8 +904,16 @@ void StartHBlank(u32 line)
 
 void FinishFrame(u32 lines)
 {
-    FrontBuffer = FrontBuffer ? 0 : 1;
-    AssignFramebuffers();
+    if (FrameskipVal >= Config::Frameskip)
+        FrameskipVal = 0;
+    else
+        FrameskipVal++;
+
+    if (FrameskipVal == 0)
+    {
+        FrontBuffer = FrontBuffer ? 0 : 1;
+        AssignFramebuffers();
+    }
 
     TotalScanlines = lines;
 }

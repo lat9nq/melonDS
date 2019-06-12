@@ -34,7 +34,6 @@ int ScreenRotation;
 int ScreenGap;
 int ScreenLayout;
 int ScreenSizing;
-int ScreenFilter;
 
 int LimitFPS;
 
@@ -71,7 +70,6 @@ ConfigEntry PlatformConfigFile[] =
     {"ScreenGap",      0, &ScreenGap,      0, NULL, 0},
     {"ScreenLayout",   0, &ScreenLayout,   0, NULL, 0},
     {"ScreenSizing",   0, &ScreenSizing,   0, NULL, 0},
-    {"ScreenFilter",   0, &ScreenFilter,   1, NULL, 0},
 
     {"LimitFPS", 0, &LimitFPS, 1, NULL, 0},
 

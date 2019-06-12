@@ -40,7 +40,7 @@ u32 rgbaToU32(u8 r, u8 g, u8 b, u8 a);
 void initRenderer();
 void deinitRenderer();
 
-void drawImage(u32 *image, int imageWidth, int imageHeight, bool reverse, float x, float y, float width, float height, int rotation);
+void drawImage(u32 *image, int imageWidth, int imageHeight, float x, float y, float width, float height);
 void drawString(string str, float x, float y, int size, bool right, u32 color);
 void drawLine(float x1, float y1, float x2, float y2, u32 color);
 void setTextureFiltering(bool enabled);

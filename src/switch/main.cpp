@@ -20,6 +20,10 @@
 #include <cstring>
 #include <unistd.h>
 
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <glad/glad.h>
+
 #include "ui.h"
 
 // Deal with conflicting typedefs
@@ -31,7 +35,9 @@
 #include "../Savestate.h"
 #include "../GPU.h"
 #include "../NDS.h"
+#include "../OpenGLSupport.h"
 #include "../SPU.h"
+#include "../libui_sdl/main_shaders.h"
 
 typedef struct
 {
@@ -44,7 +50,7 @@ string romPath, sramPath, statePath, sramStatePath;
 u32 displayBuffer[256 * 384];
 float topX, topY, topWidth, topHeight, botX, botY, botWidth, botHeight;
 
-Thread core, audio, mic;
+Thread audio, mic;
 ClkrstSession cpuSession;
 AppletHookCookie cookie;
 
@@ -54,6 +60,20 @@ u32 count;
 
 u8 hotkeyMask;
 bool lidClosed;
+
+GLuint GL_ScreenShader[3];
+GLuint GL_ScreenShaderAccel[3];
+struct
+{
+    float uScreenSize[2];
+    u32 u3DScale;
+    u32 uFilterMode;
+} GL_ShaderConfig;
+GLuint GL_ShaderConfigUBO;
+GLuint GL_ScreenVertexArrayID, GL_ScreenVertexBufferID;
+float GL_ScreenVertices[2 * 3 * 2 * 4];
+GLuint GL_ScreenTexture;
+bool GL_ScreenSizeDirty;
 
 const int clockSpeeds[] = { 1020000000, 1224000000, 1581000000, 1785000000 };
 
@@ -90,7 +110,9 @@ const vector<string> controlValues =
 const vector<string> settingNames =
 {
     "Boot Game Directly",
-    "Threaded 3D Renderer",
+    "Threaded Software Renderer",
+    "OpenGL Renderer",
+    "OpenGL Resolution",
     "Frameskip",
     "Audio Volume",
     "Microphone Input",
@@ -99,7 +121,6 @@ const vector<string> settingNames =
     "Mid-Screen Gap",
     "Screen Layout",
     "Screen Sizing",
-    "Screen Filtering",
     "Limit Framerate",
     "Switch Overclock"
 };
@@ -108,6 +129,8 @@ const vector<SettingValue> settingValues =
 {
     { { "Off", "On" },                                                               &Config::DirectBoot         },
     { { "Off", "On" },                                                               &Config::Threaded3D         },
+    { { "Off", "On" },                                                               &Config::_3DRenderer        },
+    { { "", "1x (256x192)", "2x (512x384)", "3x (768x576)", "4x (1024x768)" },       &Config::GL_ScaleFactor     },
     { { "0", "1", "2", "3", "4", "5", "6", "7", "8", "9" },                          &Config::Frameskip          },
     { { "0%", "25%", "50%", "75%", "100%" },                                         &Config::AudioVolume        },
     { { "None", "Microphone", "White Noise" },                                       &Config::MicInputType       },
@@ -116,7 +139,6 @@ const vector<SettingValue> settingValues =
     { { "0 Pixels", "1 Pixel", "8 Pixels", "64 Pixels", "90 Pixels", "128 Pixels" }, &Config::ScreenGap          },
     { { "Natural", "Vertical", "Horizontal" },                                       &Config::ScreenLayout       },
     { { "Even", "Emphasize Top", "Emphasize Bottom" },                               &Config::ScreenSizing       },
-    { { "Off", "On" },                                                               &Config::ScreenFilter       },
     { { "Off", "On" },                                                               &Config::LimitFPS           },
     { { "1020 MHz", "1224 MHz", "1581 MHz", "1785 MHz" },                            &Config::SwitchOverclock    }
 };
@@ -321,30 +343,15 @@ void setScreenLayout()
         swapValues(&topHeight, &botHeight);
     }
 
-    setTextureFiltering(Config::ScreenFilter);
+    GL_ScreenSizeDirty = true;
 }
 
 void onAppletHook(AppletHookType hook, void *param)
 {
     if (hook == AppletHookType_OnOperationMode || hook == AppletHookType_OnPerformanceMode)
     {
-        if (R_FAILED(pcvSetClockRate(PcvModule_Cpu, clockSpeeds[Config::SwitchOverclock])))
+        if (R_FAILED(pcvSetClockRate(PcvModule_CpuBus, clockSpeeds[Config::SwitchOverclock])))
             clkrstSetClockRate(&cpuSession, clockSpeeds[Config::SwitchOverclock]);
-    }
-}
-
-void runCore(void *args)
-{
-    while (!(hotkeyMask & BIT(2)))
-    {
-        chrono::steady_clock::time_point start = chrono::steady_clock::now();
-
-        NDS::RunFrame();
-        memcpy(displayBuffer, GPU::Framebuffer, sizeof(GPU::Framebuffer));
-
-        chrono::duration<double> elapsed = chrono::steady_clock::now() - start;
-        if (Config::LimitFPS && elapsed.count() < 1.0f / 60)
-            usleep((1.0f / 60 - elapsed.count()) * 1000000);
     }
 }
 
@@ -437,15 +444,12 @@ void startCore(bool reset)
         NDS::LoadROM(romPath.c_str(), sramPath.c_str(), Config::DirectBoot);
     }
 
-    threadCreate(&core, runCore, NULL, 0x8000, 0x30, 1);
-    threadStart(&core);
-
     if (Config::AudioVolume > 0)
     {
         audoutInitialize();
         audoutStartAudioOut();
         setupAudioBuffer();
-        threadCreate(&audio, audioOutput, NULL, 0x8000, 0x2F, 0);
+        threadCreate(&audio, audioOutput, NULL, 0x8000, 0x30, 1);
         threadStart(&audio);
     }
     if (Config::MicInputType == 1)
@@ -458,21 +462,26 @@ void startCore(bool reset)
     if (Config::SwitchOverclock > 0)
     {
         pcvInitialize();
-        if (R_FAILED(pcvSetClockRate(PcvModule_Cpu, clockSpeeds[Config::SwitchOverclock])))
+        if (R_FAILED(pcvSetClockRate(PcvModule_CpuBus, clockSpeeds[Config::SwitchOverclock])))
         {
             clkrstInitialize();
-            clkrstOpenSession(&cpuSession, PcvModule_Cpu);
+            clkrstOpenSession(&cpuSession, PcvModuleId_CpuBus, 0);
             clkrstSetClockRate(&cpuSession, clockSpeeds[Config::SwitchOverclock]);
         }
     }
+
+    GPU3D::DeInitRenderer();
+    if (Config::_3DRenderer)
+        GPU3D::InitRenderer(true);
+    else
+        GPU3D::InitRenderer(false);
 }
 
 void pauseCore()
 {
-    threadWaitForExit(&core);
     threadWaitForExit(&audio);
     threadWaitForExit(&mic);
-    if (R_FAILED(pcvSetClockRate(PcvModule_Cpu, clockSpeeds[0])))
+    if (R_FAILED(pcvSetClockRate(PcvModule_CpuBus, clockSpeeds[0])))
     {
         clkrstSetClockRate(&cpuSession, clockSpeeds[0]);
         clkrstExit();
@@ -559,7 +568,7 @@ void settingsMenu()
         {
             (*settingValues[selection].value)++;
             if (*settingValues[selection].value >= (int)settingValues[selection].names.size())
-                *settingValues[selection].value = 0;
+                *settingValues[selection].value = (selection == 3 ? 1 : 0);
         }
         else if (pressed & KEY_B)
         {
@@ -678,6 +687,254 @@ bool pauseMenu()
     return true;
 }
 
+bool GLScreen_InitShader(GLuint *shader, const char *fs)
+{
+    if (!GPU3D::GLRenderer::OpenGL_BuildShaderProgram(kScreenVS, fs, shader, "ScreenShader"))
+        return false;
+
+    glBindAttribLocation(shader[2], 0, "vPosition");
+    glBindAttribLocation(shader[2], 1, "vTexcoord");
+    glBindFragDataLocation(shader[2], 0, "oColor");
+
+    if (!GPU3D::GLRenderer::OpenGL_LinkShaderProgram(shader))
+        return false;
+
+    GLuint uni_id;
+
+    uni_id = glGetUniformBlockIndex(shader[2], "uConfig");
+    glUniformBlockBinding(shader[2], uni_id, 16);
+
+    glUseProgram(shader[2]);
+    uni_id = glGetUniformLocation(shader[2], "ScreenTex");
+    glUniform1i(uni_id, 0);
+    uni_id = glGetUniformLocation(shader[2], "_3DTex");
+    glUniform1i(uni_id, 1);
+
+    return true;
+}
+
+bool GLScreen_Init()
+{
+    if (!GPU3D::GLRenderer::OpenGL_Init())
+        return false;
+
+    if (!GLScreen_InitShader(GL_ScreenShader, kScreenFS))
+        return false;
+    if (!GLScreen_InitShader(GL_ScreenShaderAccel, kScreenFS_Accel))
+        return false;
+
+    memset(&GL_ShaderConfig, 0, sizeof(GL_ShaderConfig));
+
+    glGenBuffers(1, &GL_ShaderConfigUBO);
+    glBindBuffer(GL_UNIFORM_BUFFER, GL_ShaderConfigUBO);
+    glBufferData(GL_UNIFORM_BUFFER, sizeof(GL_ShaderConfig), &GL_ShaderConfig, GL_STATIC_DRAW);
+    glBindBufferBase(GL_UNIFORM_BUFFER, 16, GL_ShaderConfigUBO);
+
+    glGenBuffers(1, &GL_ScreenVertexBufferID);
+    glBindBuffer(GL_ARRAY_BUFFER, GL_ScreenVertexBufferID);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(GL_ScreenVertices), NULL, GL_STATIC_DRAW);
+
+    glGenVertexArrays(1, &GL_ScreenVertexArrayID);
+    glBindVertexArray(GL_ScreenVertexArrayID);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * 4, (void*)(0));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * 4, (void*)(2 * 4));
+
+    glGenTextures(1, &GL_ScreenTexture);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, GL_ScreenTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8UI, 256 * 3 + 1, 192 * 2, 0, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE, NULL);
+
+    GL_ScreenSizeDirty = true;
+
+    return true;
+}
+
+void GLScreen_DrawScreen()
+{
+    if (GL_ScreenSizeDirty)
+    {
+        GL_ScreenSizeDirty = false;
+
+        GL_ShaderConfig.uScreenSize[0] = 1280;
+        GL_ShaderConfig.uScreenSize[1] = 720;
+        GL_ShaderConfig.u3DScale = Config::GL_ScaleFactor;
+
+        glBindBuffer(GL_UNIFORM_BUFFER, GL_ShaderConfigUBO);
+        void* unibuf = glMapBuffer(GL_UNIFORM_BUFFER, GL_WRITE_ONLY);
+        if (unibuf) memcpy(unibuf, &GL_ShaderConfig, sizeof(GL_ShaderConfig));
+        glUnmapBuffer(GL_UNIFORM_BUFFER);
+
+        float scwidth, scheight;
+
+        float x0, y0, x1, y1;
+        float s0, s1, s2, s3;
+        float t0, t1, t2, t3;
+
+#define SETVERTEX(i, x, y, s, t) \
+    GL_ScreenVertices[4*(i) + 0] = x; \
+    GL_ScreenVertices[4*(i) + 1] = y; \
+    GL_ScreenVertices[4*(i) + 2] = s; \
+    GL_ScreenVertices[4*(i) + 3] = t;
+
+        x0 = topX;
+        y0 = topY;
+        x1 = topX + topWidth;
+        y1 = topY + topHeight;
+
+        scwidth = 256;
+        scheight = 192;
+
+        switch (Config::ScreenRotation)
+        {
+            case 0:
+                s0 = 0; t0 = 0;
+                s1 = scwidth; t1 = 0;
+                s2 = 0; t2 = scheight;
+                s3 = scwidth; t3 = scheight;
+                break;
+
+            case 1:
+                s0 = 0; t0 = scheight;
+                s1 = 0; t1 = 0;
+                s2 = scwidth; t2 = scheight;
+                s3 = scwidth; t3 = 0;
+                break;
+
+            case 2:
+                s0 = scwidth; t0 = scheight;
+                s1 = 0; t1 = scheight;
+                s2 = scwidth; t2 = 0;
+                s3 = 0; t3 = 0;
+                break;
+
+            default:
+                s0 = scwidth; t0 = 0;
+                s1 = scwidth; t1 = scheight;
+                s2 = 0; t2 = 0;
+                s3 = 0; t3 = scheight;
+                break;
+        }
+
+
+        SETVERTEX(0, x0, y0, s0, t0);
+        SETVERTEX(1, x1, y1, s3, t3);
+        SETVERTEX(2, x1, y0, s1, t1);
+        SETVERTEX(3, x0, y0, s0, t0);
+        SETVERTEX(4, x0, y1, s2, t2);
+        SETVERTEX(5, x1, y1, s3, t3);
+
+        x0 = botX;
+        y0 = botY;
+        x1 = botX + botWidth;
+        y1 = botY + botHeight;
+
+        scwidth = 256;
+        scheight = 192;
+
+        switch (Config::ScreenRotation)
+        {
+            case 0:
+                s0 = 0; t0 = 192;
+                s1 = scwidth; t1 = 192;
+                s2 = 0; t2 = 192 + scheight;
+                s3 = scwidth; t3 = 192 + scheight;
+                break;
+
+            case 1:
+                s0 = 0; t0 = 192 + scheight;
+                s1 = 0; t1 = 192;
+                s2 = scwidth; t2 = 192 + scheight;
+                s3 = scwidth; t3 = 192;
+                break;
+
+            case 2:
+                s0 = scwidth; t0 = 192 + scheight;
+                s1 = 0; t1 = 192 + scheight;
+                s2 = scwidth; t2 = 192;
+                s3 = 0; t3 = 192;
+                break;
+
+            default:
+                s0 = scwidth; t0 = 192;
+                s1 = scwidth; t1 = 192 + scheight;
+                s2 = 0; t2 = 192;
+                s3 = 0; t3 = 192 + scheight;
+                break;
+        }
+
+        SETVERTEX(6, x0, y0, s0, t0);
+        SETVERTEX(7, x1, y1, s3, t3);
+        SETVERTEX(8, x1, y0, s1, t1);
+        SETVERTEX(9, x0, y0, s0, t0);
+        SETVERTEX(10, x0, y1, s2, t2);
+        SETVERTEX(11, x1, y1, s3, t3);
+
+#undef SETVERTEX
+
+        glBindBuffer(GL_ARRAY_BUFFER, GL_ScreenVertexBufferID);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(GL_ScreenVertices), GL_ScreenVertices);
+
+        GPU3D::UpdateRendererConfig();
+    }
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_BLEND);
+    glColorMaski(0, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+
+    glViewport(0, 0, 1280, 720);
+
+    if (GPU3D::Renderer == 0)
+        GPU3D::GLRenderer::OpenGL_UseShaderProgram(GL_ScreenShader);
+    else
+        GPU3D::GLRenderer::OpenGL_UseShaderProgram(GL_ScreenShaderAccel);
+
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    {
+        int frontbuf = GPU::FrontBuffer;
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, GL_ScreenTexture);
+
+        if (GPU::Framebuffer[frontbuf][0] && GPU::Framebuffer[frontbuf][1])
+        {
+            if (GPU3D::Renderer == 0)
+            {
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, 192, GL_RGBA_INTEGER,
+                                GL_UNSIGNED_BYTE, GPU::Framebuffer[frontbuf][0]);
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 192, 256, 192, GL_RGBA_INTEGER,
+                                GL_UNSIGNED_BYTE, GPU::Framebuffer[frontbuf][1]);
+            }
+            else
+            {
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256 * 3 + 1, 192, GL_RGBA_INTEGER,
+                                GL_UNSIGNED_BYTE, GPU::Framebuffer[frontbuf][0]);
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 192, 256 * 3 + 1, 192, GL_RGBA_INTEGER,
+                                GL_UNSIGNED_BYTE, GPU::Framebuffer[frontbuf][1]);
+            }
+        }
+
+        glActiveTexture(GL_TEXTURE1);
+        if (GPU3D::Renderer != 0)
+            GPU3D::GLRenderer::SetupAccelFrame();
+
+        glBindBuffer(GL_ARRAY_BUFFER, GL_ScreenVertexBufferID);
+        glBindVertexArray(GL_ScreenVertexArrayID);
+        glDrawArrays(GL_TRIANGLES, 0, 4 * 3);
+    }
+
+    refreshDisplay();
+}
+
 int main(int argc, char **argv)
 {
     initRenderer();
@@ -719,10 +976,14 @@ int main(int argc, char **argv)
     micBuffer.data_size = 1440 * 2 * sizeof(s16);
     micBuffer.data_offset = 0;
 
+    GPU3D::GLRenderer::OpenGL_Init();
+    GLScreen_Init();
     startCore(true);
 
     while (appletMainLoop())
     {
+        chrono::steady_clock::time_point start = chrono::steady_clock::now();
+
         hidScanInput();
         u32 pressed = hidKeysDown(CONTROLLER_P1_AUTO);
         u32 released = hidKeysUp(CONTROLLER_P1_AUTO);
@@ -796,10 +1057,12 @@ int main(int argc, char **argv)
             NDS::ReleaseScreen();
         }
 
-        clearDisplay(0);
-        drawImage(displayBuffer, 256, 192, true, topX, topY, topWidth, topHeight, Config::ScreenRotation);
-        drawImage(&displayBuffer[256 * 192], 256, 192, true, botX, botY, botWidth, botHeight, Config::ScreenRotation);
-        refreshDisplay();
+        NDS::RunFrame();
+        GLScreen_DrawScreen();
+
+        chrono::duration<double> elapsed = chrono::steady_clock::now() - start;
+        if (Config::LimitFPS && elapsed.count() < 1.0f / 60)
+            usleep((1.0f / 60 - elapsed.count()) * 1000000);
     }
 
     hotkeyMask |= BIT(2);

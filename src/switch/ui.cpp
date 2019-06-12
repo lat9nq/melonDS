@@ -241,9 +241,12 @@ void setSurface()
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, 1280, 720);
     glBindVertexArray(0);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glActiveTexture(GL_TEXTURE0);
 }
 
-void drawImage(u32 *image, int imageWidth, int imageHeight, bool reverse, float x, float y, float width, float height, int rotation)
+void drawImage(u32 *image, int imageWidth, int imageHeight, float x, float y, float width, float height)
 {
     Vertex dimensions[] =
     {
@@ -253,29 +256,11 @@ void drawImage(u32 *image, int imageWidth, int imageHeight, bool reverse, float 
         { { x + width, y          }, { 1.0f, 0.0f } }
     };
 
-    // Rotate the image 90 degrees clockwise for every rotation
-    for (int i = 0; i < rotation; i++)
-    {
-        int size = sizeof(dimensions[0].position);
-        Vertex *copy = new Vertex[sizeof(dimensions) / sizeof(Vertex)];
-        memcpy(copy, dimensions, sizeof(dimensions));
-        for (int k = 0; k < 8; k += 4)
-        {
-            memcpy(dimensions[k    ].position, copy[k + 1].position, size);
-            memcpy(dimensions[k + 1].position, copy[k + 2].position, size);
-            memcpy(dimensions[k + 2].position, copy[k + 3].position, size);
-            memcpy(dimensions[k + 3].position, copy[k    ].position, size);
-        }
-        delete[] copy;
-    }
-
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(dimensions), dimensions, GL_DYNAMIC_DRAW);
 
-    GLenum format = reverse ? GL_BGRA : GL_RGBA;
-    GLenum type = reverse ? GL_UNSIGNED_INT_8_8_8_8_REV : GL_UNSIGNED_INT_8_8_8_8;
     glBindTexture(GL_TEXTURE_2D, texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, imageWidth, imageHeight, 0, format, type, image);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, imageWidth, imageHeight, 0, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, image);
 
     setSurface();
     glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
@@ -303,7 +288,7 @@ void drawString(string str, float x, float y, int size, bool right, u32 color)
     if (right) // Align the string to the right
         x -= width * size / 48;
 
-    drawImage(tex, width, 48, false, x, y, width * size / 48, size, 0);
+    drawImage(tex, width, 48, x, y, width * size / 48, size);
     delete[] tex;
 }
 
@@ -515,11 +500,11 @@ u32 menuScreen(string title, string actionPlus, string actionX, vector<Icon> ico
                 // Draw the selection box and row lines
                 if (row == position && showSelector)
                 {
-                    drawImage(&uiPalette[3], 1, 1, false,   90, 125 + i * 70, 1100, 69, 0);
-                    drawImage(&uiPalette[4], 1, 1, false,   89, 121 + i * 70, 1103,  5, 0);
-                    drawImage(&uiPalette[4], 1, 1, false,   89, 191 + i * 70, 1103,  5, 0);
-                    drawImage(&uiPalette[4], 1, 1, false,   88, 122 + i * 70,    5, 73, 0);
-                    drawImage(&uiPalette[4], 1, 1, false, 1188, 122 + i * 70,    5, 73, 0);
+                    drawImage(&uiPalette[3], 1, 1,   90, 125 + i * 70, 1100, 69);
+                    drawImage(&uiPalette[4], 1, 1,   89, 121 + i * 70, 1103,  5);
+                    drawImage(&uiPalette[4], 1, 1,   89, 191 + i * 70, 1103,  5);
+                    drawImage(&uiPalette[4], 1, 1,   88, 122 + i * 70,    5, 73);
+                    drawImage(&uiPalette[4], 1, 1, 1188, 122 + i * 70,    5, 73);
                 }
                 else
                 {
@@ -529,7 +514,7 @@ u32 menuScreen(string title, string actionPlus, string actionX, vector<Icon> ico
                 // Draw the rows
                 if (icons.size() > row)
                 {
-                    drawImage(icons[row].texture, icons[row].size, icons[row].size, false, 105, 126 + i * 70, 64, 64, 0);
+                    drawImage(icons[row].texture, icons[row].size, icons[row].size, 105, 126 + i * 70, 64, 64);
                     drawString(items[row], 184, 140 + i * 70, 38, false, uiPalette[1]);
                 }
                 else
