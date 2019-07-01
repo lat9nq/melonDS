@@ -710,26 +710,31 @@ bool JoystickButtonDown(int val)
 {
     if (val == -1) return false;
 
-    if (val & 0x100)
+    bool hasbtn = ((val & 0xFFFF) != 0xFFFF);
+
+    if (hasbtn)
     {
-        int hatnum = (val >> 4) & 0xF;
-        int hatdir = val & 0xF;
-        Uint8 hatval = SDL_JoystickGetHat(Joystick, hatnum);
+        if (val & 0x100)
+        {
+            int hatnum = (val >> 4) & 0xF;
+            int hatdir = val & 0xF;
+            Uint8 hatval = SDL_JoystickGetHat(Joystick, hatnum);
 
-        bool pressed = false;
-        if      (hatdir == 0x1) pressed = (hatval & SDL_HAT_UP);
-        else if (hatdir == 0x4) pressed = (hatval & SDL_HAT_DOWN);
-        else if (hatdir == 0x2) pressed = (hatval & SDL_HAT_RIGHT);
-        else if (hatdir == 0x8) pressed = (hatval & SDL_HAT_LEFT);
+            bool pressed = false;
+            if      (hatdir == 0x1) pressed = (hatval & SDL_HAT_UP);
+            else if (hatdir == 0x4) pressed = (hatval & SDL_HAT_DOWN);
+            else if (hatdir == 0x2) pressed = (hatval & SDL_HAT_RIGHT);
+            else if (hatdir == 0x8) pressed = (hatval & SDL_HAT_LEFT);
 
-        if (pressed) return true;
-    }
-    else
-    {
-        int btnnum = val & 0xFFFF;
-        Uint8 btnval = SDL_JoystickGetButton(Joystick, btnnum);
+            if (pressed) return true;
+        }
+        else
+        {
+            int btnnum = val & 0xFFFF;
+            Uint8 btnval = SDL_JoystickGetButton(Joystick, btnnum);
 
-        if (btnval) return true;
+            if (btnval) return true;
+        }
     }
 
     if (val & 0x10000)
@@ -1044,6 +1049,12 @@ int EmuThreadFunc(void* burp)
     return 44203;
 }
 
+void StopEmuThread()
+{
+    EmuRunning = 0;
+    SDL_WaitThread(EmuThread, NULL);
+}
+
 
 void OnAreaDraw(uiAreaHandler* handler, uiArea* area, uiAreaDrawParams* params)
 {
@@ -1212,8 +1223,8 @@ int OnAreaKeyEvent(uiAreaHandler* handler, uiArea* area, uiAreaKeyEvent* evt)
                 KeyHotkeyMask |= (1<<i);
 
         // REMOVE ME
-        if (evt->Scancode == 0x57) // F11
-            NDS::debug(0);
+        //if (evt->Scancode == 0x57) // F11
+        //    NDS::debug(0);
     }
 
     return 1;
@@ -1851,6 +1862,7 @@ int OnCloseWindow(uiWindow* window, void* blarg)
     while (EmuStatus != 3);
 
     CloseAllDialogs();
+    StopEmuThread();
     uiQuit();
     return 1;
 }
@@ -1888,6 +1900,7 @@ void OnCloseByMenu(uiMenuItem* item, uiWindow* window, void* blarg)
     while (EmuStatus != 3);
 
     CloseAllDialogs();
+    StopEmuThread();
     DestroyMainWindow();
     uiQuit();
 }
@@ -2417,6 +2430,7 @@ void CreateMainWindow(bool opengl)
     if (opengl_good)
     {
         uiGLMakeContextCurrent(GLContext);
+        uiGLSetVSync(0); // TODO: make configurable?
         if (!GLScreen_Init()) opengl_good = false;
         if (opengl_good)
         {
@@ -2684,9 +2698,6 @@ int main(int argc, char** argv)
     }
 
     uiMain();
-
-    EmuRunning = 0;
-    SDL_WaitThread(EmuThread, NULL);
 
     if (Joystick) SDL_JoystickClose(Joystick);
     if (AudioDevice) SDL_CloseAudioDevice(AudioDevice);
