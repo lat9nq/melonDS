@@ -40,29 +40,21 @@ GLuint program, vbo, texture;
 bool showSelector = true;
 
 AudioOutBuffer audioBuffers[2];
-s16 *audioData[2];
+s16* audioData[2];
 
-const int charWidths[] =
-{
-    11,  9, 11, 20, 18, 28, 24,  7, 12, 12,
-    14, 24,  9, 12,  9, 16, 21, 21, 21, 21,
-    21, 21, 21, 21, 21, 21,  9,  9, 26, 24,
-    26, 18, 28, 24, 21, 24, 26, 20, 20, 27,
-    23,  9, 17, 21, 16, 31, 27, 29, 19, 29,
-    20, 18, 21, 26, 24, 37, 21, 21, 24, 12,
-    16, 12, 18, 16,  9, 20, 21, 18, 21, 20,
-    10, 20, 20,  8, 12, 19,  9, 30, 20, 21,
-    21, 21, 12, 16, 12, 20, 17, 29, 17, 17,
-    16,  9,  8,  9, 12,  0, 40, 40, 40, 40
-};
+const int charWidths[] = {11, 9,  11, 20, 18, 28, 24, 7,  12, 12, 14, 24, 9,  12, 9,  16, 21,
+                          21, 21, 21, 21, 21, 21, 21, 21, 21, 9,  9,  26, 24, 26, 18, 28, 24,
+                          21, 24, 26, 20, 20, 27, 23, 9,  17, 21, 16, 31, 27, 29, 19, 29, 20,
+                          18, 21, 26, 24, 37, 21, 21, 24, 12, 16, 12, 18, 16, 9,  20, 21, 18,
+                          21, 20, 10, 20, 20, 8,  12, 19, 9,  30, 20, 21, 21, 21, 12, 16, 12,
+                          20, 17, 29, 17, 17, 16, 9,  8,  9,  12, 0,  40, 40, 40, 40};
 
-typedef struct
-{
+typedef struct {
     float position[2];
     float texCoord[2];
 } Vertex;
 
-const char *vertexShader = R"(
+const char* vertexShader = R"(
     #version 330 core
     precision mediump float;
 
@@ -77,7 +69,7 @@ const char *vertexShader = R"(
     }
 )";
 
-const char *fragmentShader = R"(
+const char* fragmentShader = R"(
     #version 330 core
     precision mediump float;
 
@@ -91,14 +83,12 @@ const char *fragmentShader = R"(
     };
 )";
 
-u32 rgbaToU32(u8 r, u8 g, u8 b, u8 a)
-{
+u32 rgbaToU32(u8 r, u8 g, u8 b, u8 a) {
     return (r << 24) | (g << 16) | (b << 8) | a;
 }
 
-u32 *bmpToTexture(string filename)
-{
-    FILE *bmp = fopen(filename.c_str(), "rb");
+u32* bmpToTexture(string filename) {
+    FILE* bmp = fopen(filename.c_str(), "rb");
     if (!bmp)
         return NULL;
 
@@ -109,15 +99,17 @@ u32 *bmpToTexture(string filename)
     int height = *(int*)&header[22];
 
     // Convert the bitmap data to RGBA format
-    u32 *tex = new u32[width * height];
-    for (int y = 1; y <= height; y++)
-    {
-        for (int x = 0; x < width; x++)
-        {
-            u8 b; fread(&b, sizeof(u8), 1, bmp);
-            u8 g; fread(&g, sizeof(u8), 1, bmp);
-            u8 r; fread(&r, sizeof(u8), 1, bmp);
-            u8 a; fread(&a, sizeof(u8), 1, bmp);
+    u32* tex = new u32[width * height];
+    for (int y = 1; y <= height; y++) {
+        for (int x = 0; x < width; x++) {
+            u8 b;
+            fread(&b, sizeof(u8), 1, bmp);
+            u8 g;
+            fread(&g, sizeof(u8), 1, bmp);
+            u8 r;
+            fread(&r, sizeof(u8), 1, bmp);
+            u8 a;
+            fread(&a, sizeof(u8), 1, bmp);
             tex[(height - y) * width + x] = rgbaToU32(r, g, b, a);
         }
     }
@@ -126,16 +118,14 @@ u32 *bmpToTexture(string filename)
     return tex;
 }
 
-int stringWidth(string str)
-{
+int stringWidth(string str) {
     int width = 0;
     for (unsigned int i = 0; i < str.size(); i++)
         width += charWidths[str[i] - 32];
     return width;
 }
 
-void loadTheme()
-{
+void loadTheme() {
     // Get the current system theme
     setsysInitialize();
     setsysGetColorSetId(&systemTheme);
@@ -150,28 +140,24 @@ void loadTheme()
     romfsExit();
 
     // Set the theme colors
-    if (systemTheme == ColorSetId_Light)
-    {
+    if (systemTheme == ColorSetId_Light) {
         uiPalette[0] = rgbaToU32(235, 235, 235, 255);
-        uiPalette[1] = rgbaToU32( 45,  45,  45, 255);
+        uiPalette[1] = rgbaToU32(45, 45, 45, 255);
         uiPalette[2] = rgbaToU32(205, 205, 205, 255);
         uiPalette[3] = rgbaToU32(255, 255, 255, 255);
-        uiPalette[4] = rgbaToU32( 50, 215, 210, 255);
-        uiPalette[5] = rgbaToU32( 50,  80, 240, 255);
-    }
-    else
-    {
-        uiPalette[0] = rgbaToU32( 45,  45,  45, 255);
+        uiPalette[4] = rgbaToU32(50, 215, 210, 255);
+        uiPalette[5] = rgbaToU32(50, 80, 240, 255);
+    } else {
+        uiPalette[0] = rgbaToU32(45, 45, 45, 255);
         uiPalette[1] = rgbaToU32(255, 255, 255, 255);
-        uiPalette[2] = rgbaToU32( 75,  75,  75, 255);
-        uiPalette[3] = rgbaToU32( 35,  35,  35, 255);
-        uiPalette[4] = rgbaToU32( 85, 185, 225, 255);
-        uiPalette[5] = rgbaToU32(  0, 255, 200, 255);
+        uiPalette[2] = rgbaToU32(75, 75, 75, 255);
+        uiPalette[3] = rgbaToU32(35, 35, 35, 255);
+        uiPalette[4] = rgbaToU32(85, 185, 225, 255);
+        uiPalette[5] = rgbaToU32(0, 255, 200, 255);
     }
 }
 
-void initRenderer()
-{
+void initRenderer() {
     // Initialize EGL
     display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     eglInitialize(display, NULL, NULL);
@@ -203,9 +189,11 @@ void initRenderer()
 
     glGenBuffers(1, &vbo);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, position));
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex),
+                          (void*)offsetof(Vertex, position));
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, texCoord));
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex),
+                          (void*)offsetof(Vertex, texCoord));
     glEnableVertexAttribArray(1);
 
     glGenTextures(1, &texture);
@@ -222,8 +210,7 @@ void initRenderer()
     loadTheme();
 }
 
-void deinitRenderer()
-{
+void deinitRenderer() {
     glDeleteProgram(program);
     glDeleteTextures(1, &texture);
     glDeleteBuffers(1, &vbo);
@@ -235,8 +222,7 @@ void deinitRenderer()
     eglTerminate(display);
 }
 
-void setSurface()
-{
+void setSurface() {
     glUseProgram(program);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, 1280, 720);
@@ -246,41 +232,38 @@ void setSurface()
     glActiveTexture(GL_TEXTURE0);
 }
 
-void drawImage(u32 *image, int imageWidth, int imageHeight, float x, float y, float width, float height)
-{
-    Vertex dimensions[] =
-    {
-        { { x + width, y + height }, { 1.0f, 1.0f } },
-        { { x,         y + height }, { 0.0f, 1.0f } },
-        { { x,         y          }, { 0.0f, 0.0f } },
-        { { x + width, y          }, { 1.0f, 0.0f } }
-    };
+void drawImage(u32* image, int imageWidth, int imageHeight, float x, float y, float width,
+               float height) {
+    Vertex dimensions[] = {{{x + width, y + height}, {1.0f, 1.0f}},
+                           {{x, y + height}, {0.0f, 1.0f}},
+                           {{x, y}, {0.0f, 0.0f}},
+                           {{x + width, y}, {1.0f, 0.0f}}};
 
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(dimensions), dimensions, GL_DYNAMIC_DRAW);
 
     glBindTexture(GL_TEXTURE_2D, texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, imageWidth, imageHeight, 0, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, image);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, imageWidth, imageHeight, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_8_8_8_8, image);
 
     setSurface();
     glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
 }
 
-void drawString(string str, float x, float y, int size, bool right, u32 color)
-{
+void drawString(string str, float x, float y, int size, bool right, u32 color) {
     int width = stringWidth(str);
-    u32 *tex = new u32[width * 48];
+    u32* tex = new u32[width * 48];
     int currentX = 0;
 
     // Copy the characters from the font bitmap into the string texture
-    for (unsigned int i = 0; i < str.size(); i++)
-    {
+    for (unsigned int i = 0; i < str.size(); i++) {
         int col = (str[i] - 32) % 10;
         int row = (str[i] - 32) / 10;
 
         for (int j = 0; j < 48; j++)
             for (int k = 0; k < charWidths[str[i] - 32]; k++)
-                tex[j * width + currentX + k] = (color & ~0xFF) | (font[(row * 512 + col) * 48 + j * 512 +  k] & 0xFF);
+                tex[j * width + currentX + k] =
+                    (color & ~0xFF) | (font[(row * 512 + col) * 48 + j * 512 + k] & 0xFF);
 
         currentX += charWidths[str[i] - 32];
     }
@@ -292,13 +275,8 @@ void drawString(string str, float x, float y, int size, bool right, u32 color)
     delete[] tex;
 }
 
-void drawLine(float x1, float y1, float x2, float y2, u32 color)
-{
-    Vertex dimensions[] =
-    {
-        { { x1, y1 }, { 0.0f, 0.0f } },
-        { { x2, y2 }, { 0.0f, 0.0f } }
-    };
+void drawLine(float x1, float y1, float x2, float y2, u32 color) {
+    Vertex dimensions[] = {{{x1, y1}, {0.0f, 0.0f}}, {{x2, y2}, {0.0f, 0.0f}}};
 
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(dimensions), dimensions, GL_DYNAMIC_DRAW);
@@ -310,28 +288,25 @@ void drawLine(float x1, float y1, float x2, float y2, u32 color)
     glDrawArrays(GL_LINES, 0, 2);
 }
 
-void setTextureFiltering(bool enabled)
-{
+void setTextureFiltering(bool enabled) {
     glBindTexture(GL_TEXTURE_2D, texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, enabled ? GL_LINEAR : GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, enabled ? GL_LINEAR : GL_NEAREST);
 }
 
-void clearDisplay(u8 color)
-{
+void clearDisplay(u8 color) {
     setSurface();
     float clear = (float)color / 255;
     glClearColor(clear, clear, clear, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 }
 
-void refreshDisplay()
-{
+void refreshDisplay() {
     eglSwapBuffers(display, surface);
 }
 
-u32 menuScreen(string title, string actionPlus, string actionX, vector<Icon> icons, vector<string> items, vector<string> subitems, int *selection)
-{
+u32 menuScreen(string title, string actionPlus, string actionX, vector<Icon> icons,
+               vector<string> items, vector<string> subitems, int* selection) {
     if (actionPlus != "")
         actionPlus = "\x83 " + actionPlus + "     ";
     if (actionX != "")
@@ -339,10 +314,10 @@ u32 menuScreen(string title, string actionPlus, string actionX, vector<Icon> ico
     string actionB = "\x81 Back     ";
     string actionA = "\x80 OK";
 
-    unsigned int boundsAB    = 1218 - (stringWidth(actionA) + charWidths[0] * 2.5) * 34 / 48;
-    unsigned int boundsBX    = boundsAB    - stringWidth(actionB)    * 34 / 48;
-    unsigned int boundsXPlus = boundsBX    - stringWidth(actionX)    * 34 / 48;
-    unsigned int boundsPlus  = boundsXPlus - stringWidth(actionPlus) * 34 / 48;
+    unsigned int boundsAB = 1218 - (stringWidth(actionA) + charWidths[0] * 2.5) * 34 / 48;
+    unsigned int boundsBX = boundsAB - stringWidth(actionB) * 34 / 48;
+    unsigned int boundsXPlus = boundsBX - stringWidth(actionX) * 34 / 48;
+    unsigned int boundsPlus = boundsXPlus - stringWidth(actionPlus) * 34 / 48;
 
     unsigned int position = *selection;
     bool upHeld = false;
@@ -352,12 +327,15 @@ u32 menuScreen(string title, string actionPlus, string actionX, vector<Icon> ico
 
     bool touchStarted = false;
     bool touchScroll = false;
-    touchPosition touch, touchMove;
+    HidTouchScreenState state = {0};
+    HidTouchState touch, touchMove;
 
     setTextureFiltering(true);
 
-    while (true)
-    {
+    PadState pad;
+    padInitializeDefault(&pad);
+
+    while (true) {
         clearDisplay((systemTheme == ColorSetId_Light) ? 235 : 45);
 
         drawString(title, 72, 30, 42, false, uiPalette[1]);
@@ -365,32 +343,28 @@ u32 menuScreen(string title, string actionPlus, string actionX, vector<Icon> ico
         drawLine(30, 648, 1250, 648, uiPalette[1]);
         drawString(actionPlus + actionX + actionB + actionA, 1218, 667, 34, true, uiPalette[1]);
 
-        hidScanInput();
-        u32 pressed = hidKeysDown(CONTROLLER_P1_AUTO);
-        u32 released = hidKeysUp(CONTROLLER_P1_AUTO);
+		padUpdate(&pad);
+        u64 pressed = padGetButtonsDown(&pad);
+        u64 released = padGetButtonsUp(&pad);
 
-        if (pressed & KEY_UP && position > 0)
-        {
+        if (pressed & HidNpadButton_Up && position > 0) {
             if (!showSelector)
                 showSelector = true;
             else
                 position--;
             upHeld = true;
             timeHeld = chrono::steady_clock::now();
-        }
-        else if (pressed & KEY_DOWN && position < items.size() - 1)
-        {
+        } else if (pressed & HidNpadButton_Down && position < items.size() - 1) {
             if (!showSelector)
                 showSelector = true;
             else
                 position++;
             downHeld = true;
             timeHeld = chrono::steady_clock::now();
-        }
-        else if ((pressed & (KEY_A | KEY_B)) || (actionX != "" && (pressed & KEY_X)) || (actionPlus != "" && (pressed & KEY_PLUS)))
-        {
-            if (!(pressed & KEY_A) || showSelector)
-            {
+        } else if ((pressed & (HidNpadButton_A | HidNpadButton_B)) ||
+                   (actionX != "" && (pressed & HidNpadButton_X)) ||
+                   (actionPlus != "" && (pressed & HidNpadButton_Plus))) {
+            if (!(pressed & HidNpadButton_A) || showSelector) {
                 showSelector = true;
                 *selection = position;
                 return pressed;
@@ -398,45 +372,38 @@ u32 menuScreen(string title, string actionPlus, string actionX, vector<Icon> ico
             showSelector = true;
         }
 
-        if (released & KEY_UP)
-        {
+        if (released & HidNpadButton_Up) {
             upHeld = false;
             scroll = false;
         }
-        if (released & KEY_DOWN)
-        {
+        if (released & HidNpadButton_Down) {
             downHeld = false;
             scroll = false;
         }
 
         // Scroll continuously when up or down is held
-        if ((upHeld && position > 0) || (downHeld && position < items.size() - 1))
-        {
+        if ((upHeld && position > 0) || (downHeld && position < items.size() - 1)) {
             chrono::duration<double> elapsed = chrono::steady_clock::now() - timeHeld;
             if (!scroll && elapsed.count() > 0.5f)
                 scroll = true;
-            if (scroll && elapsed.count() > 0.1f)
-            {
+            if (scroll && elapsed.count() > 0.1f) {
                 position += (upHeld && position > 0) ? -1 : 1;
                 timeHeld = chrono::steady_clock::now();
             }
         }
 
-        if (hidTouchCount() > 0)
-        {
-            if (!touchStarted)
-            {
-                hidTouchRead(&touch, 0);
+        if (hidGetTouchScreenStates(&state, 1) && state.count > 0) {
+            if (!touchStarted) {
+				memcpy(&touch, &state.touches[0], sizeof(touch));
                 touchStarted = true;
                 touchScroll = false;
                 showSelector = false;
             }
-            hidTouchRead(&touchMove, 0);
+			memcpy(&touchMove, &state.touches[0], sizeof(touchMove));
 
-            if (touchScroll)
-            {
+            if (touchScroll) {
                 // Scroll with a dragged touch
-                int newPos = *selection + (int)(touch.py - touchMove.py) / 70;
+                int newPos = *selection + (int)(touch.y - touchMove.y) / 70;
                 if (items.size() <= 7)
                     position = 0;
                 else if (newPos > (int)items.size() - 4)
@@ -445,9 +412,8 @@ u32 menuScreen(string title, string actionPlus, string actionX, vector<Icon> ico
                     position = 3;
                 else
                     position = newPos;
-            }
-            else if (touchMove.px > touch.px + 25 || touchMove.px < touch.px - 25 || touchMove.py > touch.py + 25 || touchMove.py < touch.py - 25)
-            {
+            } else if (touchMove.x > touch.x + 25 || touchMove.x < touch.x - 25 ||
+                       touchMove.y > touch.y + 25 || touchMove.y < touch.y - 25) {
                 // Prepare to scroll with a dragged touch
                 touchScroll = true;
                 if (items.size() <= 7)
@@ -459,18 +425,15 @@ u32 menuScreen(string title, string actionPlus, string actionX, vector<Icon> ico
                 else
                     *selection = position;
             }
-        }
-        else
-        {
+        } else {
             // Simulate a button press if the button text is touched
-            if (!touchScroll && touch.py >= 650)
-            {
-                if (touch.px >= boundsBX && touch.px < boundsAB)
-                    return KEY_B | KEY_TOUCH;
-                else if (touch.px >= boundsXPlus && touch.px < boundsBX)
-                    return KEY_X | KEY_TOUCH;
-                else if (touch.px >= boundsPlus && touch.px < boundsXPlus)
-                    return KEY_PLUS | KEY_TOUCH;
+            if (!touchScroll && touch.y >= 650) {
+                if (touch.x >= boundsBX && touch.x < boundsAB)
+                    return HidNpadButton_B | HidGestureType_Touch;
+                else if (touch.x >= boundsXPlus && touch.x < boundsBX)
+                    return HidNpadButton_X | HidGestureType_Touch;
+                else if (touch.x >= boundsPlus && touch.x < boundsXPlus)
+                    return HidNpadButton_Plus | HidGestureType_Touch;
             }
             touchStarted = false;
         }
@@ -478,10 +441,8 @@ u32 menuScreen(string title, string actionPlus, string actionX, vector<Icon> ico
         if (items.size() > 0)
             drawLine(90, 124, 1190, 124, uiPalette[2]);
 
-        for (unsigned int i = 0; i < 7; i++)
-        {
-            if (i < items.size())
-            {
+        for (unsigned int i = 0; i < 7; i++) {
+            if (i < items.size()) {
                 unsigned int row;
                 if (position < 4 || items.size() <= 7)
                     row = i;
@@ -491,34 +452,29 @@ u32 menuScreen(string title, string actionPlus, string actionX, vector<Icon> ico
                     row = i + position - 3;
 
                 // Simulate an A press on a selection if its row is touched
-                if (!touchStarted && !touchScroll && touch.px >= 90 && touch.px < 1190 && touch.py >= 124 + i * 70 && touch.py < 194 + i * 70)
-                {
+                if (!touchStarted && !touchScroll && touch.x >= 90 && touch.x < 1190 &&
+                    touch.y >= 124 + i * 70 && touch.y < 194 + i * 70) {
                     *selection = row;
-                    return KEY_A | KEY_TOUCH;
+                    return HidNpadButton_A | HidGestureType_Touch;
                 }
 
                 // Draw the selection box and row lines
-                if (row == position && showSelector)
-                {
-                    drawImage(&uiPalette[3], 1, 1,   90, 125 + i * 70, 1100, 69);
-                    drawImage(&uiPalette[4], 1, 1,   89, 121 + i * 70, 1103,  5);
-                    drawImage(&uiPalette[4], 1, 1,   89, 191 + i * 70, 1103,  5);
-                    drawImage(&uiPalette[4], 1, 1,   88, 122 + i * 70,    5, 73);
-                    drawImage(&uiPalette[4], 1, 1, 1188, 122 + i * 70,    5, 73);
-                }
-                else
-                {
+                if (row == position && showSelector) {
+                    drawImage(&uiPalette[3], 1, 1, 90, 125 + i * 70, 1100, 69);
+                    drawImage(&uiPalette[4], 1, 1, 89, 121 + i * 70, 1103, 5);
+                    drawImage(&uiPalette[4], 1, 1, 89, 191 + i * 70, 1103, 5);
+                    drawImage(&uiPalette[4], 1, 1, 88, 122 + i * 70, 5, 73);
+                    drawImage(&uiPalette[4], 1, 1, 1188, 122 + i * 70, 5, 73);
+                } else {
                     drawLine(90, 194 + i * 70, 1190, 194 + i * 70, uiPalette[2]);
                 }
 
                 // Draw the rows
-                if (icons.size() > row)
-                {
-                    drawImage(icons[row].texture, icons[row].size, icons[row].size, 105, 126 + i * 70, 64, 64);
+                if (icons.size() > row) {
+                    drawImage(icons[row].texture, icons[row].size, icons[row].size, 105,
+                              126 + i * 70, 64, 64);
                     drawString(items[row], 184, 140 + i * 70, 38, false, uiPalette[1]);
-                }
-                else
-                {
+                } else {
                     drawString(items[row], 105, 140 + i * 70, 38, false, uiPalette[1]);
                 }
                 if (subitems.size() > row)
@@ -530,8 +486,7 @@ u32 menuScreen(string title, string actionPlus, string actionX, vector<Icon> ico
     }
 }
 
-u32 messageScreen(string title, vector<string> text, bool exit)
-{
+u32 messageScreen(string title, vector<string> text, bool exit) {
     clearDisplay((systemTheme == ColorSetId_Light) ? 235 : 45);
 
     drawString(title, 72, 30, 42, false, uiPalette[1]);
@@ -546,19 +501,19 @@ u32 messageScreen(string title, vector<string> text, bool exit)
 
     refreshDisplay();
 
-    while (true)
-    {
-        hidScanInput();
-        u32 pressed = hidKeysDown(CONTROLLER_P1_AUTO);
-        if ((!exit && pressed) || (pressed & KEY_PLUS))
+    PadState pad;
+    padInitializeDefault(&pad);
+
+    while (true) {
+		padUpdate(&pad);
+        u64 pressed = padGetButtonsDown(&pad);
+        if ((!exit && pressed) || (pressed & HidNpadButton_Plus))
             return pressed;
     }
 }
 
-void setupAudioBuffer()
-{
-    for (int i = 0; i < 2; i++)
-    {
+void setupAudioBuffer() {
+    for (int i = 0; i < 2; i++) {
         int size = 1024 * 2 * sizeof(s16);
         int alignedSize = (size + 0xFFF) & ~0xFFF;
         audioData[i] = (s16*)memalign(0x1000, size);
@@ -572,16 +527,15 @@ void setupAudioBuffer()
     }
 }
 
-vector<string> dirContents(string directory, string extension)
-{
+vector<string> dirContents(string directory, string extension) {
     vector<string> contents;
-    DIR *dir = opendir(directory.c_str());
-    dirent *entry;
+    DIR* dir = opendir(directory.c_str());
+    dirent* entry;
 
-    while ((entry = readdir(dir)))
-    {
+    while ((entry = readdir(dir))) {
         string name = entry->d_name;
-        if (entry->d_type == DT_DIR || name.find(extension, (name.length() - extension.length())) != string::npos)
+        if (entry->d_type == DT_DIR ||
+            name.find(extension, (name.length() - extension.length())) != string::npos)
             contents.push_back(name);
     }
 

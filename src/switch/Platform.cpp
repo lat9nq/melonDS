@@ -66,7 +66,7 @@ FILE* OpenLocalFile(const char* path, const char* mode)
 void* Thread_Create(void (*func)())
 {
     Thread* thread = (Thread*)malloc(sizeof(Thread));
-    threadCreate(thread, (void(*)(void*))func, NULL, 0x8000, 0x30, 2);
+    threadCreate(thread, (void(*)(void*))func, nullptr, nullptr, 0x8000, 0x30, 2);
     threadStart(thread);
     return thread;
 }
